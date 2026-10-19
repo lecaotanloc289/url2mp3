@@ -17,7 +17,7 @@ chạy `cargo install --path .`.
 ## Dùng
 
 ```bash
-tainhac https://www.youtube.com/watch?v=Llw9Q6akRo4      # một bài → ~/Music/TaiNhac
+tainhac https://www.youtube.com/watch?v=Llw9Q6akRo4      # một bài → ~/Downloads
 tainhac "lạc trôi sơn tùng"                              # tìm trên YouTube, tải kết quả đầu
 tainhac https://www.tiktok.com/@user/video/123 link2 …   # nhiều link cùng lúc
 tainhac 'https://www.youtube.com/playlist?list=…' -n 20  # 20 bài đầu của playlist
@@ -29,7 +29,7 @@ tainhac                                                  # dán link vào, Enter
 |---|---|
 | `-f mp3\|m4a\|opus` | Định dạng xuất. Mặc định `mp3` |
 | `-b 320` | Bitrate khi phải nén lại. Mặc định MP3 VBR V0 (~245 kbps), M4A 256, Opus 160 |
-| `-o DIR` | Thư mục lưu. Mặc định `~/Music/TaiNhac`. Playlist vào thư mục con theo tên playlist |
+| `-o DIR` | Thư mục lưu. Mặc định `~/Downloads`. Playlist vào thư mục con theo tên playlist |
 | `-j N` | Số bài xử lý cùng lúc. Mặc định = số nhân CPU (tối đa 8) |
 | `-c N` | Số kết nối song song cho mỗi bài. Mặc định 8 |
 | `-p` | Link `watch?v=…&list=…`: tải cả playlist thay vì một bài |
@@ -70,6 +70,7 @@ link ─▶ yt-dlp -J ─▶ URL luồng audio tốt nhất ─▶ tải song so
 
 | Lỗi | Cách xử lý |
 |---|---|
+| `zsh: parse error near '&'` | Bọc link trong nháy đơn: `tainhac '…watch?v=…&list=…'`, hoặc chạy `tainhac` rồi dán link |
 | `Sign in to confirm you're not a bot` | Giảm `-j`, hoặc thêm `--cookies-from-browser chrome` |
 | Lỗi YouTube khác | `brew upgrade yt-dlp` (YouTube đổi API thường xuyên) |
 | `tải trực tiếp lỗi (HTTP 403)` | Chỉ là cảnh báo: chương trình đã tự tải lại bằng yt-dlp |

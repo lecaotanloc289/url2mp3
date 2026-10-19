@@ -40,7 +40,7 @@ struct Cli {
     #[arg(short, long, value_parser = clap::value_parser!(u32).range(32..=320))]
     bitrate: Option<u32>,
 
-    /// Thư mục lưu [mặc định: ~/Music/TaiNhac]
+    /// Thư mục lưu [mặc định: ~/Downloads]
     #[arg(short, long)]
     out: Option<PathBuf>,
 
@@ -172,14 +172,14 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
 
     let out = match cli.out {
         Some(p) => p,
-        None => dirs::audio_dir()
-            .or_else(|| dirs::home_dir().map(|h| h.join("Music")))
-            .context("không tìm thấy thư mục nhạc, dùng -o")?
-            .join("TaiNhac"),
+        None => dirs::download_dir()
+            .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
+            .context("không tìm thấy thư mục Downloads, dùng -o")?,
     };
     tokio::fs::create_dir_all(&out)
         .await
         .with_context(|| format!("tạo {}", out.display()))?;
+    sweep_stale_temp(&out).await;
     // Inside the output dir so the final rename never crosses filesystems.
     let tmp = tempfile::Builder::new().prefix(".tainhac-").tempdir_in(&out)?;
 
@@ -368,7 +368,7 @@ async fn track(ctx: &Ctx, info: &Info, title: &str, dir: &Path) -> Result<Outcom
     }
     if !ctx.force && tokio::fs::try_exists(&dest).await.unwrap_or(false) {
         ctx.println(format!(
-            "• đã có: {}",
+            "• đã có: {} (--force để tải lại)",
             dest.strip_prefix(&ctx.out).unwrap_or(&dest).display()
         ));
         return Ok(Outcome::Skipped);
@@ -487,6 +487,30 @@ impl Ctx {
         pb.set_message(msg);
         pb.enable_steady_tick(Duration::from_millis(120));
         pb
+    }
+}
+
+/// Remove `.tainhac-*` temp dirs left by a run that was killed or crashed. Only ones older than
+/// an hour, so a second tainhac running right now keeps its own.
+async fn sweep_stale_temp(out: &Path) {
+    let Ok(mut dir) = tokio::fs::read_dir(out).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        if !entry.file_name().to_string_lossy().starts_with(".tainhac-") {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .await
+            .ok()
+            .filter(|m| m.is_dir())
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > Duration::from_secs(3600));
+        if stale {
+            let _ = tokio::fs::remove_dir_all(entry.path()).await;
+        }
     }
 }
 
