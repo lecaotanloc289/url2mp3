@@ -85,3 +85,7 @@ cargo build --release   # target/release/url2mp3
 
 Chỉ dùng cho nội dung bạn có quyền tải (dùng cá nhân, nội dung của bạn, Creative Commons).
 Tải từ YouTube/TikTok vi phạm điều khoản dịch vụ của các nền tảng đó.
+
+## Giấy phép
+
+[MIT](LICENSE)
