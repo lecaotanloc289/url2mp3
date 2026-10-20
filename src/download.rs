@@ -106,13 +106,15 @@ impl Downloader {
             .get(url)
             .headers(headers.clone())
             .send()
-            .await?
-            .error_for_status()?;
+            .await
+            .map_err(short)?
+            .error_for_status()
+            .map_err(short)?;
         let content_type = resp.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok());
         if content_type.is_some_and(|t| t.starts_with("text/")) {
             bail!("không phải ảnh");
         }
-        let body = resp.bytes().await?;
+        let body = resp.bytes().await.map_err(short)?;
         if body.is_empty() {
             bail!("ảnh rỗng");
         }
@@ -135,7 +137,8 @@ impl Downloader {
             .headers(headers.clone())
             .header(RANGE, format!("bytes=0-{}", PROBE_CHUNK - 1))
             .send()
-            .await?;
+            .await
+            .map_err(short)?;
         match resp.status() {
             StatusCode::PARTIAL_CONTENT => {
                 let (first, _, total) = content_range(&resp).context("server không trả Content-Range")?;
@@ -144,7 +147,7 @@ impl Downloader {
                 }
                 pb.set_length(total);
                 let mut buf = Vec::with_capacity(PROBE_CHUNK.min(total) as usize);
-                while let Some(piece) = resp.chunk().await? {
+                while let Some(piece) = resp.chunk().await.map_err(short)? {
                     if (buf.len() + piece.len()) as u64 > PROBE_CHUNK.min(total) {
                         bail!("server trả thừa dữ liệu");
                     }
@@ -162,7 +165,7 @@ impl Downloader {
                     pb.set_length(n);
                 }
                 let (mut buf, mut written) = (Vec::with_capacity(FLUSH), 0u64);
-                while let Some(piece) = resp.chunk().await? {
+                while let Some(piece) = resp.chunk().await.map_err(short)? {
                     pb.inc(piece.len() as u64);
                     buf.extend_from_slice(&piece);
                     if buf.len() >= FLUSH {
@@ -229,7 +232,7 @@ impl Downloader {
             .header(RANGE, format!("bytes={from}-{}", end - 1))
             .send()
             .await
-            .map_err(|e| Failure::Retry(e.into()))?;
+            .map_err(|e| Failure::Retry(short(e)))?;
         match resp.status() {
             StatusCode::PARTIAL_CONTENT => {}
             s if s == StatusCode::TOO_MANY_REQUESTS || s.is_server_error() => {
@@ -265,10 +268,15 @@ impl Downloader {
                 }
                 // Short body: the caller loops and resumes from the new offset.
                 Ok(None) => return Ok(()),
-                Err(e) => return Err(Failure::Retry(e.into())),
+                Err(e) => return Err(Failure::Retry(short(e))),
             }
         }
     }
+}
+
+/// reqwest errors embed the full signed media URL (~1.5 KB): drop it from messages.
+fn short(e: reqwest::Error) -> anyhow::Error {
+    e.without_url().into()
 }
 
 fn content_range(resp: &Response) -> Option<(u64, u64, u64)> {
@@ -311,7 +319,29 @@ fn write_all_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::parse_content_range;
+    use super::{Downloader, parse_content_range};
+    use indicatif::ProgressBar;
+    use reqwest::header::HeaderMap;
+
+    #[tokio::test]
+    async fn dns_failure_message_has_no_media_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "https://url2mp3-test.invalid/videoplayback?sig=SECRET";
+        let err = Downloader::new(2)
+            .unwrap()
+            .fetch(
+                url,
+                &HeaderMap::new(),
+                Some(1000),
+                &dir.path().join("a"),
+                &ProgressBar::hidden(),
+            )
+            .await
+            .unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(!msg.contains("SECRET"), "{msg}");
+        assert!(msg.contains("dns error"), "{msg}");
+    }
 
     #[test]
     fn content_range_parsing() {

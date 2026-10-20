@@ -85,6 +85,7 @@ link ─▶ yt-dlp -J ─▶ best audio stream URL ─▶ 8 parallel connections
 |---|---|
 | `zsh: parse error near '&'` | Quote the link: `url2mp3 '…watch?v=…&list=…'`, or run `url2mp3` and paste it |
 | `Sign in to confirm you're not a bot` | Lower `-j`, or add `--cookies-from-browser chrome` |
+| `dns error` / `Failed to resolve '…googlevideo.com'` | Your network or DNS dropped out for a moment (flaky Wi-Fi, VPN/WARP). Run the same command again: finished tracks are skipped |
 | Other YouTube errors | `brew upgrade yt-dlp` (YouTube changes its API often) |
 | `tải trực tiếp lỗi (HTTP 403)` ("direct download failed") | Only a warning: the track was downloaded again through yt-dlp |
 

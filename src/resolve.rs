@@ -156,12 +156,23 @@ impl Ytdlp {
     /// Fallback when direct download is refused: let yt-dlp fetch the stream itself.
     pub async fn download(&self, page_url: &str, out: &Path, fragments: usize) -> Result<()> {
         let mut cmd = self.command();
-        cmd.args(["-q", "--no-progress", "--force-overwrites", "-N"])
-            .arg(fragments.to_string())
-            .arg("-o")
-            .arg(out)
-            .arg("--")
-            .arg(page_url);
+        // Back off between its 10 retries (1, 2, 4, 8, 8… s, for whole-file and HLS/DASH
+        // fragment requests): without it a DNS blip of a few seconds exhausts every retry at once.
+        cmd.args([
+            "-q",
+            "--no-progress",
+            "--force-overwrites",
+            "--retry-sleep",
+            "http:exp=1:8",
+            "--retry-sleep",
+            "fragment:exp=1:8",
+            "-N",
+        ])
+        .arg(fragments.to_string())
+        .arg("-o")
+        .arg(out)
+        .arg("--")
+        .arg(page_url);
         let out = cmd.output().await.context("không chạy được yt-dlp")?;
         if !out.status.success() {
             bail!(error_line(&out.stderr));

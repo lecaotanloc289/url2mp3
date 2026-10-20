@@ -162,7 +162,24 @@ struct Ctx {
 enum Outcome {
     Done(u64),
     Skipped,
-    Failed,
+    /// `network`: DNS/connection trouble on the user's side, not a YouTube change.
+    Failed {
+        network: bool,
+    },
+}
+
+fn is_network_error(msg: &str) -> bool {
+    const SIGNS: [&str; 7] = [
+        "dns error",
+        "failed to resolve",
+        "nodename nor servname",
+        "network is unreachable",
+        "connection refused",
+        "connection reset",
+        "timed out",
+    ];
+    let msg = msg.to_lowercase();
+    SIGNS.iter().any(|s| msg.contains(s))
 }
 
 async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
@@ -234,12 +251,12 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
         return Ok(ExitCode::from(130));
     }
 
-    let (mut done, mut bytes, mut skipped, mut failed) = (0, 0, 0, 0);
+    let (mut done, mut bytes, mut skipped, mut failed, mut network) = (0, 0, 0, 0, 0);
     for o in &outcomes {
         match o {
             Outcome::Done(n) => (done, bytes) = (done + 1, bytes + n),
             Outcome::Skipped => skipped += 1,
-            Outcome::Failed => failed += 1,
+            Outcome::Failed { network: net } => (failed, network) = (failed + 1, network + *net as u32),
         }
     }
     let mut summary = format!(
@@ -255,8 +272,16 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
         summary += &format!(" · lỗi {failed} bài");
     }
     ctx.println(summary);
-    if failed > 0 {
+    if network > 0 {
+        ctx.println(format!(
+            "Gợi ý: {network} bài lỗi mạng/DNS (mạng chập chờn, VPN/WARP), không phải lỗi YouTube."
+        ));
+    }
+    if failed > network {
         ctx.println("Gợi ý: lỗi YouTube thường do yt-dlp cũ, cập nhật: brew upgrade yt-dlp");
+    }
+    if failed > 0 {
+        ctx.println("Chạy lại đúng lệnh này để tải các bài lỗi: bài đã tải xong sẽ tự bỏ qua.");
     }
     drop(tmp);
     Ok(if failed > 0 {
@@ -476,7 +501,9 @@ impl Ctx {
     fn fail(&self, what: &str, err: anyhow::Error) -> Outcome {
         let msg = format!("{err:#}");
         self.println(format!("✗ {what}: {msg}"));
-        Outcome::Failed
+        Outcome::Failed {
+            network: is_network_error(&msg),
+        }
     }
 
     fn spinner(&self, msg: String) -> ProgressBar {
@@ -545,7 +572,22 @@ fn sanitize(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize;
+    use super::{is_network_error, sanitize};
+
+    #[test]
+    fn classifies_network_errors() {
+        // Real messages from a run where the local DNS stopped resolving googlevideo hosts.
+        assert!(is_network_error(
+            "[download] Got error: HTTPSConnection(host='rr4---sn-oji3bc-5j.googlevideo.com', port=443): \
+             Failed to resolve 'rr4---sn-oji3bc-5j.googlevideo.com' ([Errno 8] nodename nor servname \
+             provided, or not known). Giving up after 10 retries"
+        ));
+        assert!(is_network_error(
+            "error sending request: client error (Connect): dns error: failed to lookup address information"
+        ));
+        assert!(!is_network_error("Video unavailable. This video is private"));
+        assert!(!is_network_error("Sign in to confirm you're not a bot"));
+    }
 
     #[test]
     fn sanitize_names() {

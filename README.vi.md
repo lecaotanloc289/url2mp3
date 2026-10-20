@@ -74,6 +74,7 @@ link ─▶ yt-dlp -J ─▶ URL luồng audio tốt nhất ─▶ tải song so
 |---|---|
 | `zsh: parse error near '&'` | Bọc link trong nháy đơn: `url2mp3 '…watch?v=…&list=…'`, hoặc chạy `url2mp3` rồi dán link |
 | `Sign in to confirm you're not a bot` | Giảm `-j`, hoặc thêm `--cookies-from-browser chrome` |
+| `dns error` / `Failed to resolve '…googlevideo.com'` | Mạng hoặc DNS mất tạm thời (Wi-Fi chập chờn, VPN/WARP). Chạy lại đúng lệnh: bài đã tải xong sẽ tự bỏ qua |
 | Lỗi YouTube khác | `brew upgrade yt-dlp` (YouTube đổi API thường xuyên) |
 | `tải trực tiếp lỗi (HTTP 403)` | Chỉ là cảnh báo: chương trình đã tự tải lại bằng yt-dlp |
 
