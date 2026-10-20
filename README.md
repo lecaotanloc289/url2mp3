@@ -1,4 +1,4 @@
-# tainhac
+# url2mp3
 
 Tải nhạc từ YouTube, TikTok (và ~1800 trang yt-dlp hỗ trợ: SoundCloud, Facebook…) về máy
 dưới dạng MP3 / M4A / Opus, kèm ảnh bìa và tên bài. Chạy trong terminal: không quảng cáo,
@@ -8,7 +8,7 @@ không hàng đợi, tải nhiều bài và nhiều kết nối cùng lúc.
 
 ```bash
 brew install rust yt-dlp ffmpeg        # yt-dlp tự kéo theo deno để giải chữ ký YouTube
-cargo install --path . --root ~/.local # cài lệnh `tainhac` vào ~/.local/bin
+cargo install --path . --root ~/.local # cài lệnh `url2mp3` vào ~/.local/bin
 ```
 
 Linux/Windows: cài `yt-dlp`, `ffmpeg`, `deno` bằng trình quản lý gói của hệ điều hành, rồi
@@ -17,12 +17,12 @@ chạy `cargo install --path .`.
 ## Dùng
 
 ```bash
-tainhac https://www.youtube.com/watch?v=Llw9Q6akRo4      # một bài → ~/Downloads
-tainhac "lạc trôi sơn tùng"                              # tìm trên YouTube, tải kết quả đầu
-tainhac https://www.tiktok.com/@user/video/123 link2 …   # nhiều link cùng lúc
-tainhac 'https://www.youtube.com/playlist?list=…' -n 20  # 20 bài đầu của playlist
-tainhac -a danh-sach.txt                                 # mỗi dòng một link
-tainhac                                                  # dán link vào, Enter dòng trống để tải
+url2mp3 https://www.youtube.com/watch?v=Llw9Q6akRo4      # một bài → ~/Downloads
+url2mp3 "lạc trôi sơn tùng"                              # tìm trên YouTube, tải kết quả đầu
+url2mp3 https://www.tiktok.com/@user/video/123 link2 …   # nhiều link cùng lúc
+url2mp3 'https://www.youtube.com/playlist?list=…' -n 20  # 20 bài đầu của playlist
+url2mp3 -a danh-sach.txt                                 # mỗi dòng một link
+url2mp3                                                  # dán link vào, Enter dòng trống để tải
 ```
 
 | Tuỳ chọn | Ý nghĩa |
@@ -70,7 +70,7 @@ link ─▶ yt-dlp -J ─▶ URL luồng audio tốt nhất ─▶ tải song so
 
 | Lỗi | Cách xử lý |
 |---|---|
-| `zsh: parse error near '&'` | Bọc link trong nháy đơn: `tainhac '…watch?v=…&list=…'`, hoặc chạy `tainhac` rồi dán link |
+| `zsh: parse error near '&'` | Bọc link trong nháy đơn: `url2mp3 '…watch?v=…&list=…'`, hoặc chạy `url2mp3` rồi dán link |
 | `Sign in to confirm you're not a bot` | Giảm `-j`, hoặc thêm `--cookies-from-browser chrome` |
 | Lỗi YouTube khác | `brew upgrade yt-dlp` (YouTube đổi API thường xuyên) |
 | `tải trực tiếp lỗi (HTTP 403)` | Chỉ là cảnh báo: chương trình đã tự tải lại bằng yt-dlp |
@@ -80,7 +80,7 @@ link ─▶ yt-dlp -J ─▶ URL luồng audio tốt nhất ─▶ tải song so
 ```bash
 cargo test
 cargo clippy --release
-cargo build --release   # target/release/tainhac
+cargo build --release   # target/release/url2mp3
 ```
 
 Chỉ dùng cho nội dung bạn có quyền tải (dùng cá nhân, nội dung của bạn, Creative Commons).

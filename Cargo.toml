@@ -1,5 +1,5 @@
 [package]
-name = "tainhac"
+name = "url2mp3"
 version = "0.1.0"
 edition = "2024"
 description = "Tải nhạc YouTube/TikTok sang MP3/M4A/Opus: tải song song nhiều kết nối, không quảng cáo"

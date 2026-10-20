@@ -82,7 +82,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let inputs = match collect_inputs(&cli) {
         Ok(v) if v.is_empty() => {
-            eprintln!("Không có link nào. Xem: tainhac --help");
+            eprintln!("Không có link nào. Xem: url2mp3 --help");
             return ExitCode::from(2);
         }
         Ok(v) => v,
@@ -181,7 +181,7 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
         .with_context(|| format!("tạo {}", out.display()))?;
     sweep_stale_temp(&out).await;
     // Inside the output dir so the final rename never crosses filesystems.
-    let tmp = tempfile::Builder::new().prefix(".tainhac-").tempdir_in(&out)?;
+    let tmp = tempfile::Builder::new().prefix(".url2mp3-").tempdir_in(&out)?;
 
     let ctx = Arc::new(Ctx {
         ytdlp: Ytdlp::new(cli.format.selector(), cli.playlist, cli.limit, cli.cookies_from_browser.as_deref()),
@@ -204,7 +204,7 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
     });
 
     ctx.println(format!(
-        "tainhac · yt-dlp {ytdlp_version} · {} · {} bài cùng lúc × {} kết nối → {}",
+        "url2mp3 · yt-dlp {ytdlp_version} · {} · {} bài cùng lúc × {} kết nối → {}",
         cli.format.ext(),
         cli.jobs,
         cli.connections,
@@ -490,14 +490,14 @@ impl Ctx {
     }
 }
 
-/// Remove `.tainhac-*` temp dirs left by a run that was killed or crashed. Only ones older than
-/// an hour, so a second tainhac running right now keeps its own.
+/// Remove `.url2mp3-*` temp dirs left by a run that was killed or crashed. Only ones older than
+/// an hour, so a second url2mp3 running right now keeps its own.
 async fn sweep_stale_temp(out: &Path) {
     let Ok(mut dir) = tokio::fs::read_dir(out).await else {
         return;
     };
     while let Ok(Some(entry)) = dir.next_entry().await {
-        if !entry.file_name().to_string_lossy().starts_with(".tainhac-") {
+        if !entry.file_name().to_string_lossy().starts_with(".url2mp3-") {
             continue;
         }
         let stale = entry
