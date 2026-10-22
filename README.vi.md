@@ -3,10 +3,41 @@
 [English](README.md) · **Tiếng Việt**
 
 Tải nhạc từ YouTube, TikTok (và ~1800 trang yt-dlp hỗ trợ: SoundCloud, Facebook…) về máy
-dưới dạng MP3 / M4A / Opus, kèm ảnh bìa và tên bài. Chạy trong terminal: không quảng cáo,
-không hàng đợi, tải nhiều bài và nhiều kết nối cùng lúc.
+dưới dạng MP3 / M4A / Opus, kèm ảnh bìa và tên bài. Không quảng cáo, không hàng đợi, tải nhiều
+bài và nhiều kết nối cùng lúc. Có app cho máy tính (macOS, Windows) và lệnh chạy trong terminal.
 
-## Cài đặt (macOS)
+## App máy tính
+
+Dán link hoặc gõ tên bài, bấm Tải về (⌘/Ctrl + Enter), theo dõi danh sách. Định dạng
+(MP3 / M4A / Opus), thư mục lưu, bitrate, số bài cùng lúc, giới hạn playlist, ảnh bìa và cookie
+trình duyệt nằm trong Cài đặt. Giao diện tiếng Việt hoặc tiếng Anh, theo ngôn ngữ máy nếu bạn
+không chọn.
+
+- yt-dlp không đóng sẵn trong app: lần mở đầu tiên app tải bản mới nhất từ
+  [GitHub của yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) (~50 MB), kiểm tra với
+  SHA2-256SUMS của bản đó, và mỗi ngày kiểm tra cập nhật một lần. yt-dlp nằm trong thư mục dữ
+  liệu của app (macOS `~/Library/Application Support/dev.lecaotanloc.url2mp3/yt-dlp`, Windows
+  `%APPDATA%\dev.lecaotanloc.url2mp3\yt-dlp`). Cài đặt hiện phiên bản và nút Cập nhật.
+- ffmpeg và QuickJS (trình chạy JavaScript yt-dlp cần cho YouTube) đóng sẵn trong app.
+- macOS: lần đầu lưu vào `~/Downloads`, máy hỏi quyền dùng thư mục đó. Đóng cửa sổ thì nhạc vẫn
+  tải tiếp; bấm icon trên Dock để mở lại, ⌘Q để thoát hẳn.
+
+Tự build (cần Rust, Node.js, pnpm):
+
+```bash
+cd app
+pnpm install
+pnpm sidecars                       # ffmpeg + QuickJS đúng phiên bản đã ghim, có kiểm checksum
+pnpm tauri dev                      # chạy thử
+pnpm tauri build --bundles app,dmg  # macOS; Windows: --bundles nsis,msi
+```
+
+`pnpm test` chạy test giao diện; `pnpm dev` rồi mở <http://localhost:1420/dev/mock.html> để xem
+giao diện trong trình duyệt với backend giả.
+
+## Lệnh terminal
+
+### Cài đặt (macOS)
 
 ```bash
 brew install rust yt-dlp ffmpeg        # yt-dlp tự kéo theo deno để giải chữ ký YouTube
@@ -19,7 +50,7 @@ Từ bản clone: `cargo install --path crates/cli --root ~/.local` (cài lệnh
 Linux/Windows: cài `yt-dlp`, `ffmpeg`, `deno` bằng trình quản lý gói của hệ điều hành, rồi
 chạy dòng `cargo install` như trên.
 
-## Dùng
+### Dùng
 
 ```bash
 url2mp3 https://www.youtube.com/watch?v=Llw9Q6akRo4      # một bài → ~/Downloads
@@ -52,8 +83,8 @@ link ─▶ yt-dlp -J ─▶ URL luồng audio tốt nhất ─▶ tải song so
 ```
 
 Toàn bộ quy trình nằm trong thư viện `crates/core` (`url2mp3-core`), báo tiến độ dưới dạng sự
-kiện; lệnh `url2mp3` (`crates/cli`) chỉ vẽ các sự kiện đó ra terminal, và các app sẽ dùng chung
-thư viện này.
+kiện. Lệnh `url2mp3` (`crates/cli`) vẽ các sự kiện đó ra terminal; app máy tính
+(`app/src-tauri`, Tauri 2, giao diện ở `app/src`) chuyển chúng lên cửa sổ.
 
 - **Lấy link luồng** (`crates/core/src/resolve.rs`): gọi `yt-dlp -J` chỉ để lấy JSON. YouTube đổi thuật
   toán chữ ký vài tuần một lần, yt-dlp theo kịp, nên chỉ cần `brew upgrade yt-dlp`.
@@ -98,4 +129,5 @@ Tải từ YouTube/TikTok vi phạm điều khoản dịch vụ của các nền
 
 ## Giấy phép
 
-[MIT](LICENSE)
+[MIT](LICENSE). App đóng kèm ffmpeg (GPL), QuickJS (MIT) và tải yt-dlp (Unlicense): xem
+[THIRD_PARTY.md](THIRD_PARTY.md).

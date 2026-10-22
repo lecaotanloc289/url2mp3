@@ -3,12 +3,44 @@
 **English** · [Tiếng Việt](README.vi.md)
 
 Download music from YouTube, TikTok and the ~1,800 other sites yt-dlp supports (SoundCloud,
-Facebook…) as MP3, M4A or Opus, with cover art and tags. It is a terminal command: no ads, no
-queue, several tracks at once and several connections per track.
+Facebook…) as MP3, M4A or Opus, with cover art and tags. No ads, no queue, several tracks at
+once and several connections per track. It comes as a desktop app (macOS, Windows) and as a
+terminal command.
 
-The program's own messages are in Vietnamese.
+## Desktop app
 
-## Install
+Paste links or type a song name, press Download (⌘/Ctrl + Enter), and watch the queue. Format
+(MP3 / M4A / Opus), output folder, bitrate, tracks at once, playlist limit, cover art and
+browser cookies are in Settings. The interface is in Vietnamese or English, following the system
+unless you pick one.
+
+- yt-dlp is not bundled: on first launch the app downloads the latest release from
+  [yt-dlp's GitHub](https://github.com/yt-dlp/yt-dlp/releases) (~50 MB), checks it against the
+  release's SHA2-256SUMS, and updates it once a day. It lives in the app's data folder
+  (macOS `~/Library/Application Support/dev.lecaotanloc.url2mp3/yt-dlp`, Windows
+  `%APPDATA%\dev.lecaotanloc.url2mp3\yt-dlp`). Settings shows its version and an Update button.
+- ffmpeg and QuickJS (yt-dlp's JavaScript runtime for YouTube) ship inside the app.
+- macOS: the first download into `~/Downloads` asks for permission to use that folder. Closing
+  the window keeps downloads running; click the Dock icon to bring it back, ⌘Q to quit.
+
+Build it yourself (needs Rust, Node.js and pnpm):
+
+```bash
+cd app
+pnpm install
+pnpm sidecars                       # pinned ffmpeg + QuickJS for this machine, checksum-verified
+pnpm tauri dev                      # run it
+pnpm tauri build --bundles app,dmg  # macOS; on Windows: --bundles nsis,msi
+```
+
+`pnpm test` runs the UI tests; `pnpm dev` then <http://localhost:1420/dev/mock.html> shows the
+UI in a browser with a fake backend.
+
+## Command line
+
+The command's own messages are in Vietnamese.
+
+### Install
 
 Requires [yt-dlp](https://github.com/yt-dlp/yt-dlp) (with [deno](https://deno.com) to solve
 YouTube's signature challenge) and [ffmpeg](https://ffmpeg.org) on your `PATH`.
@@ -25,7 +57,7 @@ same `cargo install` line.
 
 From a clone: `cargo install --path crates/cli`
 
-## Usage
+### Usage
 
 ```bash
 url2mp3 https://www.youtube.com/watch?v=Llw9Q6akRo4      # one track → ~/Downloads
@@ -58,8 +90,8 @@ link ─▶ yt-dlp -J ─▶ best audio stream URL ─▶ 8 parallel connections
 ```
 
 The whole pipeline lives in the `crates/core` library (`url2mp3-core`), which reports progress as
-events; the `url2mp3` command (`crates/cli`) only draws those events in the terminal, and the apps
-will share the same library.
+events. The `url2mp3` command (`crates/cli`) draws those events in the terminal; the desktop app
+(`app/src-tauri`, Tauri 2, UI in `app/src`) forwards them to its window.
 
 - **Resolve** (`crates/core/src/resolve.rs`): runs `yt-dlp -J` only to get JSON. YouTube changes its
   signature scheme every few weeks; yt-dlp keeps up, so fixing breakage is just
@@ -106,4 +138,5 @@ Downloading from YouTube or TikTok is against those platforms' terms of service.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The app bundles ffmpeg (GPL) and QuickJS (MIT) and downloads yt-dlp
+(Unlicense): see [THIRD_PARTY.md](THIRD_PARTY.md).
