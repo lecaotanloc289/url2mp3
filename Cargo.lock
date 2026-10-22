@@ -1499,9 +1499,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "indicatif",
+ "tokio",
+ "url2mp3-core",
+]
+
+[[package]]
+name = "url2mp3-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
  "dirs",
  "futures-util",
- "indicatif",
  "reqwest",
  "serde",
  "serde_json",

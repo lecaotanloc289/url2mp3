@@ -9,6 +9,8 @@ use reqwest::header::{ACCEPT_ENCODING, COOKIE, HeaderMap, HeaderName, HeaderValu
 use serde::Deserialize;
 use tokio::process::Command;
 
+use crate::tools::Tools;
+
 #[derive(Debug, Deserialize)]
 pub struct Info {
     #[serde(rename = "_type")]
@@ -107,12 +109,19 @@ fn cookie_header(raw: &str) -> Option<String> {
 }
 
 pub struct Ytdlp {
-    /// Flags shared by every call: format selector, playlist policy, cookies.
+    tools: Tools,
+    /// Flags shared by every call: format selector, playlist policy, cookies, JS runtime.
     base: Vec<String>,
 }
 
 impl Ytdlp {
-    pub fn new(selector: &str, playlist: bool, limit: Option<usize>, browser: Option<&str>) -> Self {
+    pub fn new(
+        tools: Tools,
+        selector: &str,
+        playlist: bool,
+        limit: Option<usize>,
+        browser: Option<&str>,
+    ) -> Self {
         let mut base = vec!["--no-warnings".into(), "-f".into(), selector.into()];
         if !playlist {
             base.push("--no-playlist".into());
@@ -123,19 +132,10 @@ impl Ytdlp {
         if let Some(b) = browser {
             base.extend(["--cookies-from-browser".into(), b.into()]);
         }
-        Self { base }
-    }
-
-    pub async fn version() -> Result<String> {
-        let out = Command::new("yt-dlp")
-            .arg("--version")
-            .stdin(Stdio::null())
-            .output()
-            .await?;
-        if !out.status.success() {
-            bail!("yt-dlp --version failed");
+        if let Some(js) = &tools.js_runtime {
+            base.extend(["--js-runtimes".into(), js.clone()]);
         }
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        Self { tools, base }
     }
 
     /// One JSON document for a video, a playlist (entries flat when `flat`), or a search.
@@ -181,12 +181,8 @@ impl Ytdlp {
     }
 
     fn command(&self) -> Command {
-        let mut cmd = Command::new("yt-dlp");
-        cmd.args(&self.base)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+        let mut cmd = self.tools.ytdlp_command();
+        cmd.args(&self.base).stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd
     }
 }

@@ -5,7 +5,6 @@ use std::{fs::File, io, path::Path, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::{StreamExt, TryStreamExt, stream};
-use indicatif::ProgressBar;
 use reqwest::{
     Client, Response, StatusCode,
     header::{CONTENT_RANGE, CONTENT_TYPE, HeaderMap, RANGE},
@@ -22,6 +21,12 @@ const FLUSH: usize = 4 * 1024 * 1024;
 const RETRIES: u32 = 3;
 /// Hard cap on requests per range, even when each one makes a little progress.
 const MAX_REQUESTS: u32 = 32;
+
+/// Byte progress of one download.
+pub trait Progress: Sync {
+    fn set_length(&self, total: u64);
+    fn inc(&self, n: u64);
+}
 
 pub struct Downloader {
     client: Client,
@@ -41,7 +46,7 @@ struct Target<'a> {
     headers: &'a HeaderMap,
     total: u64,
     file: &'a Arc<File>,
-    pb: &'a ProgressBar,
+    pb: &'a dyn Progress,
 }
 
 impl Downloader {
@@ -62,7 +67,7 @@ impl Downloader {
         headers: &HeaderMap,
         size_hint: Option<u64>,
         path: &Path,
-        pb: &ProgressBar,
+        pb: &dyn Progress,
     ) -> Result<()> {
         let file = Arc::new(tokio::fs::File::create(path).await?.into_std().await);
         let (total, mut start) = match size_hint {
@@ -129,7 +134,7 @@ impl Downloader {
         url: &str,
         headers: &HeaderMap,
         file: &Arc<File>,
-        pb: &ProgressBar,
+        pb: &dyn Progress,
     ) -> Result<(u64, u64)> {
         let mut resp = self
             .client
@@ -319,9 +324,14 @@ fn write_all_at(file: &File, mut buf: &[u8], mut offset: u64) -> io::Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::{Downloader, parse_content_range};
-    use indicatif::ProgressBar;
+    use super::{Downloader, Progress, parse_content_range};
     use reqwest::header::HeaderMap;
+
+    struct NoProgress;
+    impl Progress for NoProgress {
+        fn set_length(&self, _: u64) {}
+        fn inc(&self, _: u64) {}
+    }
 
     #[tokio::test]
     async fn dns_failure_message_has_no_media_url() {
@@ -334,7 +344,7 @@ mod tests {
                 &HeaderMap::new(),
                 Some(1000),
                 &dir.path().join("a"),
-                &ProgressBar::hidden(),
+                &NoProgress,
             )
             .await
             .unwrap_err();

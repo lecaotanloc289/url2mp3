@@ -4,10 +4,11 @@
 use std::{path::Path, process::Stdio};
 
 use anyhow::{Context, Result, bail};
-use clap::ValueEnum;
-use tokio::process::Command;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+use crate::tools::Tools;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum Format {
     /// MP3: chơi được ở mọi nơi
     Mp3,
@@ -74,21 +75,8 @@ pub struct Job<'a> {
     pub tags: Tags<'a>,
 }
 
-pub async fn version() -> Result<()> {
-    let ok = Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(Stdio::null())
-        .status()
-        .await?
-        .success();
-    if !ok {
-        bail!("ffmpeg -version failed");
-    }
-    Ok(())
-}
-
-pub async fn encode(job: Job<'_>) -> Result<()> {
-    let mut cmd = Command::new("ffmpeg");
+pub async fn encode(tools: &Tools, job: Job<'_>) -> Result<()> {
+    let mut cmd = tools.ffmpeg_command();
     cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i"])
         .arg(job.input);
     if let Some(cover) = job.cover {
