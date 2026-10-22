@@ -10,11 +10,14 @@ không hàng đợi, tải nhiều bài và nhiều kết nối cùng lúc.
 
 ```bash
 brew install rust yt-dlp ffmpeg        # yt-dlp tự kéo theo deno để giải chữ ký YouTube
-cargo install --path . --root ~/.local # cài lệnh `url2mp3` vào ~/.local/bin
+cargo install --git https://github.com/lecaotanloc289/url2mp3 url2mp3
 ```
 
+Từ bản clone: `cargo install --path crates/cli --root ~/.local` (cài lệnh `url2mp3` vào
+`~/.local/bin`).
+
 Linux/Windows: cài `yt-dlp`, `ffmpeg`, `deno` bằng trình quản lý gói của hệ điều hành, rồi
-chạy `cargo install --path .`.
+chạy dòng `cargo install` như trên.
 
 ## Dùng
 
@@ -48,14 +51,18 @@ link ─▶ yt-dlp -J ─▶ URL luồng audio tốt nhất ─▶ tải song so
          chọn luồng)                              vào đúng vị trí trong file)     cùng codec)
 ```
 
-- **Lấy link luồng** (`src/resolve.rs`): gọi `yt-dlp -J` chỉ để lấy JSON. YouTube đổi thuật
+Toàn bộ quy trình nằm trong thư viện `crates/core` (`url2mp3-core`), báo tiến độ dưới dạng sự
+kiện; lệnh `url2mp3` (`crates/cli`) chỉ vẽ các sự kiện đó ra terminal, và các app sẽ dùng chung
+thư viện này.
+
+- **Lấy link luồng** (`crates/core/src/resolve.rs`): gọi `yt-dlp -J` chỉ để lấy JSON. YouTube đổi thuật
   toán chữ ký vài tuần một lần, yt-dlp theo kịp, nên chỉ cần `brew upgrade yt-dlp`.
-- **Tải** (`src/download.rs`): chia file thành các đoạn byte, tải qua N kết nối HTTP/1.1 cùng
+- **Tải** (`crates/core/src/download.rs`): chia file thành các đoạn byte, tải qua N kết nối HTTP/1.1 cùng
   lúc. Mỗi đoạn ≤ 8 MB (googlevideo bóp tốc độ request lớn hơn ~10 MB) và tự tải tiếp khi rớt
   mạng. Mỗi phản hồi được kiểm `Content-Range` (đúng vị trí, đúng tổng dung lượng) để không bao
   giờ ghi sai dữ liệu. Nếu CDN từ chối (403), trả sai đoạn, hoặc luồng là HLS/DASH, tự chuyển
   sang trình tải của yt-dlp.
-- **Chuyển định dạng** (`src/transcode.rs`): ffmpeg chạy một lượt để nén, gắn ảnh bìa (cắt
+- **Chuyển định dạng** (`crates/core/src/transcode.rs`): ffmpeg chạy một lượt để nén, gắn ảnh bìa (cắt
   vuông) và ghi tag. Nếu codec nguồn trùng codec đích (Opus→`.opus`, AAC→`.m4a`, MP3 TikTok→`.mp3`)
   thì chỉ copy luồng, không nén lại.
 
@@ -81,8 +88,8 @@ link ─▶ yt-dlp -J ─▶ URL luồng audio tốt nhất ─▶ tải song so
 ## Phát triển
 
 ```bash
-cargo test
-cargo clippy --release
+cargo test --workspace
+cargo clippy --workspace --all-targets
 cargo build --release   # target/release/url2mp3
 ```
 

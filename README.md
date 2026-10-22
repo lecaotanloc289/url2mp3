@@ -17,13 +17,13 @@ macOS:
 
 ```bash
 brew install rust yt-dlp ffmpeg   # the yt-dlp formula pulls in deno
-cargo install --git https://github.com/lecaotanloc289/url2mp3
+cargo install --git https://github.com/lecaotanloc289/url2mp3 url2mp3
 ```
 
 Linux / Windows: install `yt-dlp`, `ffmpeg` and `deno` with your package manager, then run the
 same `cargo install` line.
 
-From a clone: `cargo install --path .`
+From a clone: `cargo install --path crates/cli`
 
 ## Usage
 
@@ -57,15 +57,19 @@ link ─▶ yt-dlp -J ─▶ best audio stream URL ─▶ 8 parallel connections
          picks the stream)                     written at its offset)         codecs match)
 ```
 
-- **Resolve** (`src/resolve.rs`): runs `yt-dlp -J` only to get JSON. YouTube changes its
+The whole pipeline lives in the `crates/core` library (`url2mp3-core`), which reports progress as
+events; the `url2mp3` command (`crates/cli`) only draws those events in the terminal, and the apps
+will share the same library.
+
+- **Resolve** (`crates/core/src/resolve.rs`): runs `yt-dlp -J` only to get JSON. YouTube changes its
   signature scheme every few weeks; yt-dlp keeps up, so fixing breakage is just
   `brew upgrade yt-dlp`.
-- **Download** (`src/download.rs`): splits the file into byte ranges and fetches them over N
+- **Download** (`crates/core/src/download.rs`): splits the file into byte ranges and fetches them over N
   HTTP/1.1 connections at once. Each range is at most 8 MB (googlevideo throttles requests above
   ~10 MB) and resumes after a dropped connection. Every response's `Content-Range` is checked
   (right offset, right total size) so bad data is never written. If the CDN refuses (403),
   returns the wrong slice, or the stream is HLS/DASH, it falls back to yt-dlp's own downloader.
-- **Convert** (`src/transcode.rs`): one ffmpeg pass encodes, embeds a square-cropped cover and
+- **Convert** (`crates/core/src/transcode.rs`): one ffmpeg pass encodes, embeds a square-cropped cover and
   writes the tags. When the source codec already matches the target (Opus→`.opus`, AAC→`.m4a`,
   TikTok MP3→`.mp3`), the stream is copied without re-encoding.
 
@@ -92,8 +96,8 @@ link ─▶ yt-dlp -J ─▶ best audio stream URL ─▶ 8 parallel connections
 ## Development
 
 ```bash
-cargo test
-cargo clippy --release
+cargo test --workspace
+cargo clippy --workspace --all-targets
 cargo build --release   # target/release/url2mp3
 ```
 
