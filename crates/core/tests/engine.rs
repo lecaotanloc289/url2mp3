@@ -25,7 +25,9 @@ case "$prev" in
   *playlist*) echo '{"_type":"playlist","title":"Mix","entries":[{"_type":"url","url":"https://example.com/v/abc","title":"Fake Song"}]}'; exit 0;;
 esac
 if [ "$json" = 1 ]; then
-  echo '{"id":"abc","title":"Fake Song","uploader":"Tester","webpage_url":"https://example.com/v/abc","acodec":"mp3"}'
+  # Links containing "other" are another video with the same title.
+  case "$prev" in *other*) id=xyz;; *) id=abc;; esac
+  echo "{\"id\":\"$id\",\"title\":\"Fake Song\",\"uploader\":\"Tester\",\"webpage_url\":\"https://example.com/v/$id\",\"acodec\":\"mp3\"}"
 else
   printf 'audio' > "$out"
 fi
@@ -160,6 +162,42 @@ async fn existing_file_is_skipped() {
             reason: Skip::Exists(out.path().join("Fake Song.mp3")),
         }
     );
+}
+
+#[tokio::test]
+async fn another_video_with_the_title_of_an_existing_file_gets_its_id_appended() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    fs::write(out.path().join("Fake Song.mp3"), b"old").unwrap();
+    let (engine, _) = engine(fakes(bin.path()), out.path()).await;
+
+    assert_eq!(process(&engine, LINK).await, vec![Outcome::Skipped]);
+    assert_eq!(
+        process(&engine, "https://example.com/v/other").await,
+        vec![Outcome::Done(5)]
+    );
+    assert!(out.path().join("Fake Song [xyz].mp3").exists());
+}
+
+#[tokio::test]
+async fn failed_track_leaves_no_temp_files() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut tools = fakes(bin.path());
+    tools
+        .env
+        .push(("FAIL_ONCE".into(), bin.path().join("failed").into()));
+    let (engine, _) = engine(tools, out.path()).await;
+
+    assert_eq!(
+        process(&engine, LINK).await,
+        vec![Outcome::Failed { network: false }]
+    );
+
+    let tmp = fs::read_dir(out.path())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.file_name().unwrap().to_string_lossy().starts_with(".url2mp3-"))
+        .expect("engine temp dir");
+    assert_eq!(fs::read_dir(&tmp).unwrap().count(), 0);
 }
 
 #[tokio::test]

@@ -127,6 +127,8 @@ pub struct Engine {
     tmp: TempDir,
     sem: Semaphore,
     next: AtomicU64,
+    /// Names temp files; separate from `Id`, which callers may reuse.
+    scratch: AtomicU64,
     /// Video ids and destinations taken in this session, so two tracks with the same title
     /// don't overwrite each other and one video given twice is fetched once.
     claimed: Mutex<HashSet<String>>,
@@ -136,7 +138,8 @@ pub struct Engine {
 
 impl Engine {
     /// Creates the output folder and a temp folder inside it (removed when the engine is
-    /// dropped), after clearing temp folders left behind by a killed run.
+    /// dropped), after clearing temp folders left behind by a killed run. `sink` is called from
+    /// the download tasks and must return quickly: queue the event, don't block on it.
     pub async fn start(
         tools: Tools,
         opts: Options,
@@ -158,11 +161,12 @@ impl Engine {
                 opts.limit,
                 opts.cookies_from_browser.as_deref(),
             ),
-            dl: Downloader::new(opts.connections)?,
+            dl: Downloader::new(opts.connections.max(1))?,
             tools,
             tmp,
-            sem: Semaphore::new(opts.jobs),
+            sem: Semaphore::new(opts.jobs.max(1)),
             next: AtomicU64::new(0),
+            scratch: AtomicU64::new(0),
             claimed: Mutex::default(),
             sink: Box::new(sink),
             opts,
@@ -175,7 +179,9 @@ impl Engine {
     }
 
     /// A link, playlist or search query → one or more tracks. Dropping the future (or aborting
-    /// its task) kills every yt-dlp/ffmpeg it started.
+    /// its task) kills every yt-dlp/ffmpeg it started. Cancelling sends no event, and the
+    /// cancelled tracks give back their claims only once the task is gone: await the aborted
+    /// `JoinHandle` before starting the same link again, or it is taken for a duplicate.
     pub async fn process(self: Arc<Self>, id: Id, input: String) -> Vec<Outcome> {
         let search = !(input.starts_with("http://") || input.starts_with("https://"));
         let permit = self.sem.acquire().await.expect("semaphore never closed");
@@ -310,6 +316,8 @@ impl Engine {
             }
         }
         if !self.opts.force && tokio::fs::try_exists(&dest).await.unwrap_or(false) {
+            // Keep the name taken: another video with this title must not land on it either.
+            claims.keep = true;
             return skip(Skip::Exists(dest));
         }
         tokio::fs::create_dir_all(dir).await?;
@@ -322,9 +330,15 @@ impl Engine {
         });
 
         let tmp = self.tmp.path();
-        let audio = tmp.join(format!("{id}.audio"));
-        let cover = tmp.join(format!("{id}.cover"));
-        let encoded = tmp.join(format!("{id}.{ext}"));
+        // Another url2mp3 may have swept our temp dir as stale while this engine sat idle.
+        tokio::fs::create_dir_all(tmp).await?;
+        let n = self.scratch.fetch_add(1, Relaxed);
+        let scratch = Scratch([
+            tmp.join(format!("{n}.audio")),
+            tmp.join(format!("{n}.cover")),
+            tmp.join(format!("{n}.{ext}")),
+        ]);
+        let [audio, cover, encoded] = &scratch.0;
 
         let thumb = info
             .thumbnail
@@ -332,18 +346,18 @@ impl Engine {
             .filter(|_| self.opts.cover && self.opts.format.supports_cover());
         let fetch_cover = async {
             match thumb {
-                Some(url) => self.dl.fetch_small(url, &info.headers(), &cover).await.is_ok(),
+                Some(url) => self.dl.fetch_small(url, &info.headers(), cover).await.is_ok(),
                 None => false,
             }
         };
-        let (audio_res, has_cover) = tokio::join!(self.fetch_audio(id, info, &audio), fetch_cover);
+        let (audio_res, has_cover) = tokio::join!(self.fetch_audio(id, info, audio), fetch_cover);
         audio_res?;
 
         self.emit(Event::Converting { id });
         let job = |with_cover: bool| transcode::Job {
-            input: &audio,
+            input: audio,
             cover: with_cover.then_some(cover.as_path()),
-            output: &encoded,
+            output: encoded,
             format: self.opts.format,
             src_codec: info.acodec.as_deref().unwrap_or(""),
             bitrate: self.opts.bitrate,
@@ -360,8 +374,8 @@ impl Engine {
             encoded_ok = transcode::encode(&self.tools, job(false)).await;
         }
         encoded_ok?;
-        tokio::fs::rename(&encoded, &dest).await?;
-        let _ = tokio::join!(tokio::fs::remove_file(&audio), tokio::fs::remove_file(&cover));
+        tokio::fs::rename(encoded, &dest).await?;
+        drop(scratch);
 
         let bytes = tokio::fs::metadata(&dest).await.map(|m| m.len()).unwrap_or(0);
         claims.keep = true;
@@ -452,6 +466,18 @@ impl Drop for Claims<'_> {
     }
 }
 
+/// One track's temp files (audio, cover, encoded), removed on drop whether the track
+/// finished, failed or was cancelled, so a long-lived engine doesn't pile them up.
+struct Scratch([PathBuf; 3]);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
 /// Turns the downloader's per-chunk counts into `Event::Progress`, at most every 100 ms.
 struct Throttled<'a> {
     engine: &'a Engine,
@@ -473,11 +499,13 @@ impl<'a> Throttled<'a> {
     }
 
     fn send(&self, force: bool) {
-        let mut last = self.last.lock().expect("progress lock");
-        if !force && last.is_some_and(|t| t.elapsed() < PROGRESS_EVERY) {
-            return;
+        {
+            let mut last = self.last.lock().expect("progress lock");
+            if !force && last.is_some_and(|t| t.elapsed() < PROGRESS_EVERY) {
+                return;
+            }
+            *last = Some(Instant::now());
         }
-        *last = Some(Instant::now());
         self.engine.emit(Event::Progress {
             id: self.id,
             done: self.done.load(Relaxed),
@@ -498,26 +526,35 @@ impl Progress for Throttled<'_> {
     }
 }
 
-/// Remove `.url2mp3-*` temp dirs left by a run that was killed or crashed. Only ones older than
-/// an hour, so another url2mp3 running right now keeps its own.
+/// Remove `.url2mp3-*` temp dirs left by a run that was killed or crashed. Only ones untouched
+/// for an hour (the dir and every file in it, which a running download keeps writing), so
+/// another url2mp3 working right now keeps its own.
 async fn sweep_stale_temp(out: &Path) {
     let Ok(mut dir) = tokio::fs::read_dir(out).await else {
         return;
     };
     while let Ok(Some(entry)) = dir.next_entry().await {
-        if !entry.file_name().to_string_lossy().starts_with(".url2mp3-") {
-            continue;
-        }
-        let stale = entry
-            .metadata()
-            .await
-            .ok()
-            .filter(|m| m.is_dir())
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.elapsed().ok())
-            .is_some_and(|age| age > Duration::from_secs(3600));
-        if stale {
+        let is_dir = entry.file_type().await.is_ok_and(|t| t.is_dir());
+        if is_dir
+            && entry.file_name().to_string_lossy().starts_with(".url2mp3-")
+            && idle_for(&entry.path()).await > Duration::from_secs(3600)
+        {
             let _ = tokio::fs::remove_dir_all(entry.path()).await;
         }
     }
+}
+
+/// Time since anything in `dir` (the dir itself or a file directly in it) was modified.
+async fn idle_for(dir: &Path) -> Duration {
+    async fn age(path: &Path) -> Duration {
+        let modified = tokio::fs::metadata(path).await.and_then(|m| m.modified());
+        modified.ok().and_then(|t| t.elapsed().ok()).unwrap_or_default()
+    }
+    let mut idle = age(dir).await;
+    if let Ok(mut files) = tokio::fs::read_dir(dir).await {
+        while let Ok(Some(file)) = files.next_entry().await {
+            idle = idle.min(age(&file.path()).await);
+        }
+    }
+    idle
 }
