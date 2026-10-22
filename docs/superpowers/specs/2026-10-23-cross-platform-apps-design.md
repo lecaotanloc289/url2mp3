@@ -58,23 +58,31 @@ exit codes. All current `cargo test` cases must pass after the split.
 
 ### External tools
 
-- **Desktop:** ffmpeg and deno ship as Tauri sidecars (they rarely need changing). A pinned
-  yt-dlp standalone binary also ships, and on first run is copied into the app data dir. Once a
-  day the app checks yt-dlp's latest GitHub release; if newer, it downloads it, verifies the
-  SHA256 from the release's `SHA2-256SUMS`, and swaps it in atomically. Settings shows the
-  version and an "Update now" button. Reason: YouTube breaks yt-dlp every few weeks; users
+- **Desktop:** ffmpeg and QuickJS (`qjs` from quickjs-ng) ship as Tauri sidecars (they rarely
+  need changing). yt-dlp is **not** bundled: on first launch the app downloads yt-dlp's
+  *onedir* build (`yt-dlp_macos.zip` / `yt-dlp_win.zip`) into the app data dir, and once a day
+  checks for a newer release. Every download is verified against the release's
+  `SHA2-256SUMS`, unpacked into a versioned folder, then switched to atomically. Settings shows
+  the version and an "Update now" button. Reason: YouTube breaks yt-dlp every few weeks; users
   must not need a new app build for that.
+- **Measured 2026-10-23 (M-series Mac), why these choices:**
+  - The onefile `yt-dlp_macos` takes ~13 s to start *every* run (it unpacks to a new temp
+    dir that macOS scans each time). The onedir build pays ~14 s once, then starts in 0.25 s.
+    Onedir builds refuse `yt-dlp -U` ("unpackaged executables"), hence our own updater.
+  - QuickJS resolves a YouTube link in 5.2 s vs 3.2 s with deno (first time per player
+    version; yt-dlp caches the result), but is 1.3 MB instead of 124 MB. The same runtime
+    then serves Android, where deno is not an option.
 - **Android:** the Kotlin plugin initialises `youtubedl-android` (Python, yt-dlp, ffmpeg as
   `.so` files in `nativeLibraryDir`, which Android allows to execute) and returns the paths and
   env the core needs. yt-dlp updates through the library's `updateYoutubeDL()`.
 - **Open risk, Android JS runtime:** yt-dlp needs a JavaScript runtime to solve YouTube's
-  signature challenge. Desktop uses deno. On Android this must be proven first (spike):
-  QuickJS or deno packaged as an executable `.so`, recognised by yt-dlp. If the spike fails,
+  signature challenge. Desktop uses QuickJS. On Android this must be proven first (spike):
+  QuickJS packaged as an executable `.so`, recognised by yt-dlp. If the spike fails,
   Android falls back to a native Kotlin/Compose app on youtubedl-android (as Seal does);
   desktop is unaffected.
 - **Licences:** ffmpeg (with LAME) is GPL and is distributed as a separate executable, with
   `THIRD_PARTY.md` listing each tool's licence and source link. The app stays MIT. yt-dlp is
-  Unlicense, deno MIT.
+  Unlicense, QuickJS MIT.
 
 ## 2. UI and v1 features
 
@@ -127,7 +135,7 @@ Not in v1: persistent history, built-in player, app self-update, iOS.
 - The workflow creates a **draft** release; the owner publishes it after a smoke test.
 - The APK is signed with a self-generated keystore stored in GitHub Secrets. The owner must back
   it up: losing it means existing installs cannot be updated.
-- Sidecar binaries (ffmpeg, deno, yt-dlp) are fetched in CI from pinned versions with checksums.
+- Sidecar binaries (ffmpeg, qjs) are fetched in CI from pinned versions with checksums.
 - Homebrew tap `lecaotanloc289/homebrew-tap` with a cask whose postflight clears the quarantine
   attribute. Creating that repo is confirmed with the owner first.
 - A separate CI workflow on push/PR runs `cargo test`, `cargo clippy` and the UI tests.
