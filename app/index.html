@@ -4,10 +4,132 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>url2mp3</title>
-    <link rel="stylesheet" href="/src/style.css" />
     <script type="module" src="/src/main.ts"></script>
   </head>
   <body>
-    <div id="app"></div>
+    <header class="deck">
+      <div class="brand">
+        <span class="rec-light" aria-hidden="true"></span>
+        <div>
+          <h1>url2mp3</h1>
+          <p class="tagline" data-i18n="tagline"></p>
+        </div>
+      </div>
+      <div class="formats" role="radiogroup" id="formats">
+        <button type="button" role="radio" data-format="mp3">MP3</button>
+        <button type="button" role="radio" data-format="m4a">M4A</button>
+        <button type="button" role="radio" data-format="opus">OPUS</button>
+      </div>
+      <button type="button" class="icon-btn" id="open-settings" data-i18n-title="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></svg>
+      </button>
+    </header>
+
+    <div id="banners" class="banners"></div>
+
+    <section class="input-deck">
+      <textarea id="input" rows="3" spellcheck="false" autocomplete="off" data-i18n-placeholder="placeholder"></textarea>
+      <div class="input-actions">
+        <span class="kbd" data-i18n="shortcut"></span>
+        <button type="button" class="rec-btn" id="go">
+          <span class="dot" aria-hidden="true"></span><span data-i18n="download"></span>
+        </button>
+      </div>
+    </section>
+
+    <main class="tracklist">
+      <div id="list"></div>
+      <div id="empty" class="empty">
+        <div class="reel" aria-hidden="true"><i></i><i></i></div>
+        <h2 data-i18n="emptyTitle"></h2>
+        <p data-i18n="emptyHint"></p>
+      </div>
+    </main>
+
+    <footer class="foot">
+      <span id="summary"></span>
+      <button type="button" class="text-btn" id="clear" data-i18n="clearFinished"></button>
+    </footer>
+
+    <div id="toast" class="toast" role="status"></div>
+
+    <dialog id="settings">
+      <form method="dialog" id="settings-form">
+        <h2 data-i18n="set.title"></h2>
+        <label class="field">
+          <span data-i18n="set.outDir"></span>
+          <span class="row">
+            <output id="out-dir"></output>
+            <button type="button" class="text-btn" id="choose-dir" data-i18n="set.choose"></button>
+          </span>
+        </label>
+        <div class="grid">
+          <label class="field">
+            <span data-i18n="set.format"></span>
+            <select name="format">
+              <option value="mp3">MP3</option>
+              <option value="m4a">M4A</option>
+              <option value="opus">Opus</option>
+            </select>
+          </label>
+          <label class="field">
+            <span data-i18n="set.bitrate"></span>
+            <select name="bitrate">
+              <option value="" data-i18n="set.bitrateAuto"></option>
+              <option value="128">128 kbps</option>
+              <option value="192">192 kbps</option>
+              <option value="256">256 kbps</option>
+              <option value="320">320 kbps</option>
+            </select>
+          </label>
+          <label class="field">
+            <span data-i18n="set.jobs"></span>
+            <input type="number" name="jobs" min="1" max="32" />
+          </label>
+          <label class="field">
+            <span data-i18n="set.connections"></span>
+            <input type="number" name="connections" min="1" max="32" />
+          </label>
+          <label class="field">
+            <span data-i18n="set.playlistLimit"></span>
+            <input type="number" name="playlistLimit" min="0" max="5000" data-i18n-placeholder="set.playlistAll" />
+          </label>
+          <label class="field">
+            <span data-i18n="set.language"></span>
+            <select name="language">
+              <option value="" data-i18n="set.auto"></option>
+              <option value="vi">Tiếng Việt</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" name="cover" />
+          <span data-i18n="set.cover"></span>
+        </label>
+        <label class="field">
+          <span data-i18n="set.cookies"></span>
+          <select name="cookiesBrowser">
+            <option value="" data-i18n="set.none"></option>
+            <option value="chrome">Chrome</option>
+            <option value="edge">Edge</option>
+            <option value="firefox">Firefox</option>
+            <option value="safari">Safari</option>
+            <option value="brave">Brave</option>
+          </select>
+          <small data-i18n="set.cookiesHint"></small>
+        </label>
+        <div class="tools-row">
+          <span><span data-i18n="set.ytdlp"></span> <b id="ytdlp-version"></b></span>
+          <button type="button" class="text-btn" id="update-ytdlp" data-i18n="set.ytdlpUpdate"></button>
+          <button type="button" class="text-btn" id="copy-log" data-i18n="set.copyLog"></button>
+        </div>
+        <p class="legal" data-i18n="set.legal"></p>
+        <div class="dialog-actions">
+          <button type="button" class="text-btn" id="close-settings" data-i18n="set.close"></button>
+          <button type="submit" class="rec-btn small" value="save" data-i18n="set.save"></button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>

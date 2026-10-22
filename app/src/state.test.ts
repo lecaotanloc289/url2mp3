@@ -1,0 +1,130 @@
+import { describe, expect, it } from "vitest";
+import type { EngineEvent } from "./api";
+import { empty, groupStats, percent, reduce, summary, type QueueState } from "./state";
+
+const run = (events: EngineEvent[], gen = 1, state: QueueState = empty()) =>
+  events.reduce((s, event) => reduce(s, { kind: "engine", gen, event }), state);
+
+describe("single track", () => {
+  const events: EngineEvent[] = [
+    { kind: "probing", id: 0, parent: null, label: "https://youtu.be/x" },
+    { kind: "track", id: 0, parent: null, title: "Song", artist: "Band", thumbnail: "https://i/x.jpg" },
+    { kind: "progress", id: 0, done: 50, total: 200 },
+  ];
+
+  it("goes from probing to downloading with progress", () => {
+    const s = run(events);
+    expect(s.order).toEqual(["1:0"]);
+    const row = s.rows["1:0"];
+    expect(row).toMatchObject({
+      input: "https://youtu.be/x",
+      title: "Song",
+      artist: "Band",
+      status: "downloading",
+      done: 50,
+      total: 200,
+    });
+    expect(percent(row)).toBe(25);
+  });
+
+  it("ends done with the file path", () => {
+    const s = run([
+      ...events,
+      { kind: "converting", id: 0 },
+      { kind: "done", id: 0, path: "/m/Song.mp3", bytes: 300, secs: 1 },
+    ]);
+    expect(s.rows["1:0"]).toMatchObject({ status: "done", path: "/m/Song.mp3" });
+    expect(percent(s.rows["1:0"])).toBe(100);
+    expect(summary(s)).toEqual({ done: 1, failed: 0, active: 0 });
+  });
+
+  it("keeps the yt-dlp fallback visible", () => {
+    const s = run([...events, { kind: "fallback", id: 0, reason: "HTTP 403" }]);
+    expect(s.rows["1:0"].status).toBe("fallback");
+  });
+});
+
+describe("playlist", () => {
+  const s = run([
+    { kind: "probing", id: 0, parent: null, label: "https://youtube.com/playlist?list=1" },
+    { kind: "playlist", id: 0, title: "Chill", count: 3 },
+    { kind: "probing", id: 1, parent: 0, label: "A" },
+    { kind: "track", id: 1, parent: 0, title: "A", artist: null, thumbnail: null },
+    { kind: "done", id: 1, path: "/m/Chill/A.mp3", bytes: 1, secs: 1 },
+    { kind: "skipped", id: 2, parent: 0, title: "B", reason: { kind: "exists", path: "/m/Chill/B.mp3" } },
+    { kind: "failed", id: 3, parent: 0, label: "C", message: "Video unavailable", network: false },
+  ]);
+
+  it("turns the root row into a group holding its tracks", () => {
+    expect(s.order).toEqual(["1:0"]);
+    expect(s.rows["1:0"]).toBeUndefined();
+    const group = s.groups["1:0"];
+    expect(group).toMatchObject({ title: "Chill", count: 3, input: "https://youtube.com/playlist?list=1" });
+    expect(group.children).toEqual(["1:1", "1:2", "1:3"]);
+    expect(s.rows["1:2"]).toMatchObject({ status: "exists", path: "/m/Chill/B.mp3", parent: "1:0" });
+    expect(s.rows["1:3"]).toMatchObject({ status: "failed", message: "Video unavailable", title: "C" });
+  });
+
+  it("counts finished and failed tracks", () => {
+    expect(groupStats(s, s.groups["1:0"])).toEqual({ finished: 2, failed: 1, count: 3 });
+    expect(summary(s)).toEqual({ done: 2, failed: 1, active: 0 });
+  });
+
+  it("cancelling the playlist stops its unfinished tracks", () => {
+    const t = run(
+      [
+        { kind: "probing", id: 4, parent: 0, label: "D" },
+        { kind: "cancelled", id: 0 },
+      ],
+      1,
+      s,
+    );
+    expect(t.groups["1:0"].cancelled).toBe(true);
+    expect(t.rows["1:4"].status).toBe("cancelled");
+    expect(t.rows["1:1"].status).toBe("done");
+  });
+});
+
+describe("rows", () => {
+  it("a duplicate is shown as skipped", () => {
+    const s = run([
+      { kind: "probing", id: 0, parent: null, label: "x" },
+      { kind: "skipped", id: 0, parent: null, title: "Song", reason: { kind: "duplicate" } },
+    ]);
+    expect(s.rows["1:0"]).toMatchObject({ status: "duplicate", title: "Song" });
+  });
+
+  it("generations never collide", () => {
+    let s = run([{ kind: "probing", id: 0, parent: null, label: "a" }], 1);
+    s = run([{ kind: "probing", id: 0, parent: null, label: "b" }], 2, s);
+    expect(s.order).toEqual(["1:0", "2:0"]);
+  });
+
+  it("ignores events for rows it never saw", () => {
+    const s = run([{ kind: "progress", id: 9, done: 1, total: 2 }]);
+    expect(s).toEqual(empty());
+  });
+
+  it("cancel marks a running root", () => {
+    const s = run([
+      { kind: "probing", id: 0, parent: null, label: "x" },
+      { kind: "cancelled", id: 0 },
+    ]);
+    expect(s.rows["1:0"].status).toBe("cancelled");
+  });
+
+  it("remove and clear finished", () => {
+    let s = run([
+      { kind: "probing", id: 0, parent: null, label: "a" },
+      { kind: "probing", id: 1, parent: null, label: "b" },
+      { kind: "failed", id: 1, parent: null, label: "b", message: "x", network: true },
+      { kind: "probing", id: 2, parent: null, label: "c" },
+      { kind: "done", id: 2, path: "/c.mp3", bytes: 1, secs: 1 },
+    ]);
+    s = reduce(s, { kind: "clearFinished" });
+    expect(s.order).toEqual(["1:0", "1:1"]);
+    s = reduce(s, { kind: "remove", key: "1:1" });
+    expect(s.order).toEqual(["1:0"]);
+    expect(s.rows["1:1"]).toBeUndefined();
+  });
+});

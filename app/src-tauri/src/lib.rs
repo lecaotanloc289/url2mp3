@@ -127,6 +127,27 @@ pub fn run() {
             check_app_update,
             read_log,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running url2mp3");
+        .on_window_event(|window, event| {
+            // macOS: closing the window hides it and downloads keep going, like any Mac app;
+            // clicking the Dock icon brings it back (RunEvent::Reopen below). Quit with ⌘Q.
+            if cfg!(target_os = "macos")
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building url2mp3")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event
+                && let Some(window) = app.get_webview_window("main")
+            {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
