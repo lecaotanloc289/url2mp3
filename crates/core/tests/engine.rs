@@ -111,6 +111,37 @@ fn kinds(events: &Mutex<Vec<Event>>) -> Vec<&'static str> {
     events.lock().unwrap().iter().map(kind).collect()
 }
 
+#[test]
+fn events_serialize_for_the_apps() {
+    let done = Event::Done {
+        id: 0,
+        path: "/x/a.mp3".into(),
+        bytes: 5,
+        secs: 1.0,
+    };
+    assert_eq!(
+        serde_json::to_value(&done).unwrap(),
+        serde_json::json!({"kind": "done", "id": 0, "path": "/x/a.mp3", "bytes": 5, "secs": 1.0})
+    );
+    let skipped = Event::Skipped {
+        id: 1,
+        parent: Some(0),
+        title: "t".into(),
+        reason: Skip::Exists("/x".into()),
+    };
+    assert_eq!(
+        serde_json::to_value(&skipped).unwrap(),
+        serde_json::json!({"kind": "skipped", "id": 1, "parent": 0, "title": "t",
+                           "reason": {"kind": "exists", "path": "/x"}})
+    );
+    assert_eq!(
+        serde_json::to_value(Skip::Duplicate).unwrap(),
+        serde_json::json!({"kind": "duplicate"})
+    );
+    assert_eq!(serde_json::to_value(Format::M4a).unwrap(), "m4a");
+    assert_eq!(serde_json::from_str::<Format>("\"opus\"").unwrap(), Format::Opus);
+}
+
 #[tokio::test]
 async fn tools_report_versions() {
     let bin = tempfile::tempdir().unwrap();

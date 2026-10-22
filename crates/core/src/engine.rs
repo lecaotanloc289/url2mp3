@@ -12,6 +12,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
 use tempfile::TempDir;
 use tokio::{sync::Semaphore, task::JoinSet};
 
@@ -47,7 +48,9 @@ pub struct Options {
     pub cookies_from_browser: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// Serialized for the apps as `{"kind": "done", "id": 3, …}` with camelCase fields.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Event {
     /// yt-dlp is reading a link: the user's input, or a playlist entry.
     Probing {
@@ -105,7 +108,8 @@ pub enum Event {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "path", rename_all = "camelCase")]
 pub enum Skip {
     /// The same video, or another one with the same file name, already ran in this session.
     Duplicate,
