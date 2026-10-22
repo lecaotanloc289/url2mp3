@@ -1,0 +1,38 @@
+{
+  "aarch64-apple-darwin": {
+    "ffmpeg": {
+      "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+      "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+      "member": "ffmpeg"
+    },
+    "qjs": {
+      "url": "https://github.com/quickjs-ng/quickjs/releases/download/v0.17.0/qjs-darwin-arm64",
+      "sha256": "8be3ddfe3397d2e692e4e1e8972ee9d032a0a580505d2f8b4ea528cf1b651c11",
+      "member": null
+    }
+  },
+  "x86_64-apple-darwin": {
+    "ffmpeg": {
+      "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+      "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
+      "member": "ffmpeg"
+    },
+    "qjs": {
+      "url": "https://github.com/quickjs-ng/quickjs/releases/download/v0.17.0/qjs-darwin-x86_64",
+      "sha256": "9e5e101b4fd13cda3204222ca9f8be35412c41dcdef3745829633b7a67245412",
+      "member": null
+    }
+  },
+  "x86_64-pc-windows-msvc": {
+    "ffmpeg": {
+      "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+      "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+      "member": "ffmpeg-9.0.2-essentials_build/bin/ffmpeg.exe"
+    },
+    "qjs": {
+      "url": "https://github.com/quickjs-ng/quickjs/releases/download/v0.17.0/qjs-windows-x86_64.exe",
+      "sha256": "2aeabf0092c3262d6b2609824418f7dd7ed1f1df939f73b2b15645230cac0d77",
+      "member": null
+    }
+  }
+}

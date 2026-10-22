@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff5f6d"/>
+      <stop offset="1" stop-color="#7b2ff7"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <!-- Music note -->
+  <path d="M600 230v330a110 110 0 1 1-60-98V300l-200 50v270a110 110 0 1 1-60-98V300z"
+        fill="#fff" transform="translate(70 0)"/>
+  <!-- Download arrow -->
+  <path d="M512 700v110m-70-50 70 70 70-70" stroke="#fff" stroke-width="44"
+        stroke-linecap="round" stroke-linejoin="round" fill="none" transform="translate(150 -10)"/>
+</svg>

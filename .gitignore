@@ -1,1 +1,6 @@
 /target
+/app/node_modules
+/app/dist
+/app/.sidecar-cache
+/app/src-tauri/binaries
+/app/src-tauri/gen

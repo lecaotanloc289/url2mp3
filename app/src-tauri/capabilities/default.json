@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the url2mp3 window may call",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}
