@@ -1,5 +1,7 @@
 //! url2mp3 desktop app: the Tauri side of the UI in `app/src`.
 
+mod ytdlp;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
