@@ -1,10 +1,12 @@
 name: release
 
 # A v* tag builds every app and CLI into a draft release, which is published by hand after a
-# quick test. A manual run builds the same files as workflow artifacts, without a release.
+# quick test. A manual run, or a push to a build/* branch, builds the same files as workflow
+# artifacts, without a release.
 on:
   push:
     tags: ["v*"]
+    branches: ["build/**"]
   workflow_dispatch:
 
 permissions:
