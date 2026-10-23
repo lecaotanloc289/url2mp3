@@ -1,7 +1,11 @@
 package dev.lecaotanloc.url2mp3
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
+import android.os.Build
 import android.webkit.WebView
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -13,12 +17,18 @@ import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import java.io.File
 import java.io.RandomAccessFile
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 @InvokeArg
 class KeepAliveArgs {
     var active: Boolean = false
     var text: String? = null
+}
+
+@InvokeArg
+class ScanArgs {
+    var path: String = ""
 }
 
 /**
@@ -28,13 +38,16 @@ class KeepAliveArgs {
  */
 @TauriPlugin
 class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
-    @Volatile private var shared: String? = null
+    private val shared = AtomicReference<String?>(null)
+
+    /** prepare and updateYtdlp both touch the yt-dlp file: never at the same time. */
+    private val tools = Any()
 
     /** Unpacks Python and ffmpeg on first run, then returns where everything is. */
     @Command
     fun prepare(invoke: Invoke) {
         thread {
-            try {
+            try { synchronized(tools) {
                 val ctx = activity.applicationContext
                 val base = File(ctx.noBackupFilesDir, YoutubeDL.baseName)
                 val ytdlp = File(File(base, YoutubeDL.ytdlpDirName), YoutubeDL.ytdlpBin)
@@ -65,7 +78,7 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
                 ret.put("env", env)
                 ret.put("version", YoutubeDL.getInstance().version(ctx))
                 invoke.resolve(ret)
-            } catch (e: Throwable) {
+            } } catch (e: Throwable) {
                 invoke.reject(e.message ?: e.toString())
             }
         }
@@ -75,13 +88,13 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun updateYtdlp(invoke: Invoke) {
         thread {
-            try {
+            try { synchronized(tools) {
                 val ctx = activity.applicationContext
                 YoutubeDL.getInstance().updateYoutubeDL(ctx, YoutubeDL.UpdateChannel.STABLE)
                 val ret = JSObject()
                 ret.put("text", YoutubeDL.getInstance().version(ctx))
                 invoke.resolve(ret)
-            } catch (e: Throwable) {
+            } } catch (e: Throwable) {
                 invoke.reject(e.message ?: e.toString())
             }
         }
@@ -91,12 +104,27 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
     fun keepAlive(invoke: Invoke) {
         val args = invoke.parseArgs(KeepAliveArgs::class.java)
         val intent = Intent(activity, DownloadService::class.java)
-        if (args.active) {
-            intent.putExtra(DownloadService.TEXT, args.text)
-            activity.startForegroundService(intent)
-        } else {
-            activity.stopService(intent)
+        try {
+            if (args.active) {
+                askForNotifications()
+                intent.putExtra(DownloadService.TEXT, args.text)
+                activity.startForegroundService(intent)
+            } else {
+                activity.stopService(intent)
+            }
+        } catch (e: Exception) {
+            // Android 12+ refuses to start one while the app is in the background (e.g. an
+            // automatic retry): downloads still run, just without the protection.
+            android.util.Log.w("url2mp3", "keepAlive(${args.active}): $e")
         }
+        invoke.resolve()
+    }
+
+    /** Media index entry for a finished track, so music players list it right away. */
+    @Command
+    fun scan(invoke: Invoke) {
+        val args = invoke.parseArgs(ScanArgs::class.java)
+        MediaScannerConnection.scanFile(activity.applicationContext, arrayOf(args.path), null, null)
         invoke.resolve()
     }
 
@@ -104,9 +132,26 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun takeShared(invoke: Invoke) {
         val ret = JSObject()
-        ret.put("text", shared)
-        shared = null
+        ret.put("text", shared.getAndSet(null))
         invoke.resolve(ret)
+    }
+
+    @Volatile private var askedForNotifications = false
+
+    /**
+     * Android 13+ hides the download notification unless the user allows notifications. Asked
+     * once per run, on the first download.
+     */
+    private fun askForNotifications() {
+        if (askedForNotifications) return
+        askedForNotifications = true
+        if (Build.VERSION.SDK_INT >= 33 &&
+            activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            activity.runOnUiThread {
+                activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            }
+        }
     }
 
     override fun load(webView: WebView) {
@@ -135,7 +180,7 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
 
     private fun remember(intent: Intent?) {
         if (intent?.action == Intent.ACTION_SEND) {
-            intent.getStringExtra(Intent.EXTRA_TEXT)?.let { shared = it }
+            intent.getStringExtra(Intent.EXTRA_TEXT)?.let { shared.set(it) }
         }
     }
 }

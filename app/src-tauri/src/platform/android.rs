@@ -2,7 +2,12 @@
 //! `ToolsPlugin` unpacks and updates them, keeps downloads alive in a foreground service and
 //! hands over links shared from other apps.
 
-use std::{collections::HashMap, path::PathBuf, sync::Mutex, time::SystemTime};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::SystemTime,
+};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, de::DeserializeOwned};
@@ -48,22 +53,32 @@ struct Text {
 
 pub struct Platform {
     app: AppHandle,
-    prepared: Mutex<Option<Prepared>>,
+    /// Held across the first `prepare` call, so two callers don't unpack at once.
+    prepared: tokio::sync::Mutex<Option<Prepared>>,
+    /// Version as last known, readable without waiting for `prepared`.
+    version: Mutex<Option<String>>,
+    /// Latest wanted foreground-service state; applied one call at a time (see keep_alive).
+    keep: Arc<(Mutex<(bool, String)>, Mutex<()>)>,
     /// Only for its once-a-day `last-check` file.
     checks: Store,
 }
 
 impl Platform {
+    /// youtubedl-android rewrites yt-dlp in place: no download may run during an update.
+    pub const UPDATE_IN_PLACE: bool = true;
+
     pub fn new(app: &AppHandle, data_dir: PathBuf) -> Result<Self> {
         Ok(Self {
             app: app.clone(),
-            prepared: Mutex::default(),
+            prepared: tokio::sync::Mutex::default(),
+            version: Mutex::default(),
+            keep: Arc::default(),
             checks: Store::new(data_dir.join("yt-dlp")),
         })
     }
 
-    /// Download/ accepts any file type (our temp files too), needs no permission on Android 11+
-    /// for files the app creates, and music players index it.
+    /// Download/ accepts any file type (our temp files too) and needs no permission on Android
+    /// 11+ for files the app creates; `media_added` makes music players see the tracks.
     pub fn default_out_dir() -> Option<PathBuf> {
         Some(PathBuf::from("/storage/emulated/0/Download/url2mp3"))
     }
@@ -76,12 +91,7 @@ impl Platform {
     }
 
     pub fn version(&self) -> Option<String> {
-        self.prepared
-            .lock()
-            .expect("prepared lock")
-            .as_ref()?
-            .version
-            .clone()
+        self.version.lock().expect("version lock").clone()
     }
 
     pub async fn update(
@@ -102,9 +112,10 @@ impl Platform {
         let text: Text = self.call("updateYtdlp", json!({})).await?;
         let version = text.text.unwrap_or_else(|| before.clone());
         let _ = self.checks.mark_checked(now);
-        if let Some(p) = self.prepared.lock().expect("prepared lock").as_mut() {
+        if let Some(p) = self.prepared.lock().await.as_mut() {
             p.version = Some(version.clone());
         }
+        *self.version.lock().expect("version lock") = Some(version.clone());
         Ok(Updated {
             changed: version != before,
             version,
@@ -124,10 +135,15 @@ impl Platform {
 
     /// Foreground service + notification while something downloads, so Android doesn't kill
     /// the app when the user switches away.
+    /// Calls may run in any order on the blocking pool, so each one applies the *latest* wanted
+    /// state, one at a time: a quick stop/start can't leave the service in the wrong state.
     pub fn keep_alive(&self, active: bool, text: &str) {
-        let kotlin = self.kotlin();
-        let payload = json!({ "active": active, "text": text });
+        *self.keep.0.lock().expect("keep lock") = (active, text.to_owned());
+        let (kotlin, keep) = (self.kotlin(), self.keep.clone());
         tauri::async_runtime::spawn_blocking(move || {
+            let _one_at_a_time = keep.1.lock().expect("keep lock");
+            let (active, text) = keep.0.lock().expect("keep lock").clone();
+            let payload = json!({ "active": active, "text": text });
             if let Err(e) = kotlin.run_mobile_plugin::<Value>("keepAlive", payload) {
                 log::warn!("keepAlive: {e}");
             }
@@ -135,18 +151,31 @@ impl Platform {
     }
 
     /// The text of the last share intent, once.
-    pub fn take_shared(&self) -> Option<String> {
-        let text: Text = self.kotlin().run_mobile_plugin("takeShared", json!({})).ok()?;
+    pub async fn take_shared(&self) -> Option<String> {
+        let text: Text = self.call("takeShared", json!({})).await.ok()?;
         text.text.filter(|t| !t.trim().is_empty())
+    }
+
+    /// Tell Android's media index about a new track, so music players list it right away.
+    pub fn media_added(&self, path: &std::path::Path) {
+        let kotlin = self.kotlin();
+        let payload = json!({ "path": path });
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = kotlin.run_mobile_plugin::<Value>("scan", payload) {
+                log::warn!("scan: {e}");
+            }
+        });
     }
 
     /// Unpacks Python and ffmpeg on first use (a few seconds), then cached.
     async fn prepare(&self) -> Result<Prepared> {
-        if let Some(p) = self.prepared.lock().expect("prepared lock").clone() {
-            return Ok(p);
+        let mut slot = self.prepared.lock().await;
+        if let Some(p) = &*slot {
+            return Ok(p.clone());
         }
         let p: Prepared = self.call("prepare", json!({})).await?;
-        *self.prepared.lock().expect("prepared lock") = Some(p.clone());
+        *self.version.lock().expect("version lock") = p.version.clone();
+        *slot = Some(p.clone());
         Ok(p)
     }
 

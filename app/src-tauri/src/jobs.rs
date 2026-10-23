@@ -15,7 +15,7 @@ use std::{
 
 use anyhow::Result;
 use serde_json::json;
-use tauri::{AppHandle, Emitter, async_runtime::JoinHandle};
+use tauri::{AppHandle, Emitter, Manager, async_runtime::JoinHandle};
 use url2mp3_core::{Engine, Event, Id};
 
 use crate::{
@@ -83,6 +83,14 @@ impl Jobs {
     /// errors also go to the UI as `tools` events.
     pub async fn update_ytdlp(&self, force: bool) -> Result<ToolsStatus> {
         let _one_at_a_time = self.updating.lock().await;
+        if Platform::UPDATE_IN_PLACE && !self.running.lock().expect("running lock").is_empty() {
+            // Rewriting yt-dlp under a running download would break it: the daily check waits
+            // for a quiet moment, a click on Update is told to wait.
+            if force {
+                anyhow::bail!("ytdlp-busy");
+            }
+            return Ok(self.platform.status());
+        }
         let downloading = |version: &str| {
             let _ = self.app.emit(
                 "tools",
@@ -114,6 +122,13 @@ impl Jobs {
 
     /// Start downloading each link or search phrase. Its events follow on `engine`.
     pub async fn enqueue(self: &Arc<Self>, inputs: Vec<String>) -> Result<usize> {
+        // An in-place update must finish before yt-dlp runs again; holding the lock while the
+        // tasks are registered also keeps an update from starting under them.
+        let _no_update = if Platform::UPDATE_IN_PLACE {
+            Some(self.updating.lock().await)
+        } else {
+            None
+        };
         let (generation, engine) = self.engine().await?;
         let inputs: Vec<String> = inputs
             .iter()
@@ -179,8 +194,14 @@ impl Jobs {
         let generation = self.generation.fetch_add(1, Relaxed) + 1;
         let app = self.app.clone();
         let engine = Engine::start(tools, options, move |event: Event| {
-            if let Event::Failed { label, message, .. } = &event {
-                log::warn!("{label}: {message}");
+            match &event {
+                Event::Failed { label, message, .. } => log::warn!("{label}: {message}"),
+                Event::Done { path, .. } => {
+                    if let Some(jobs) = app.try_state::<Arc<Jobs>>() {
+                        jobs.platform.media_added(path);
+                    }
+                }
+                _ => {}
             }
             let _ = app.emit("engine", json!({ "gen": generation, "event": event }));
         })

@@ -42,4 +42,12 @@ class DownloadService : Service() {
         startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         return START_NOT_STICKY
     }
+
+    /**
+     * Android 15+ allows dataSync services ~6 h a day; when that runs out the service must stop
+     * within seconds or the app is killed. Downloads carry on, just without the notification.
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopSelf()
+    }
 }

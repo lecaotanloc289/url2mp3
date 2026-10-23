@@ -19,6 +19,9 @@ pub struct Platform {
 }
 
 impl Platform {
+    /// Each yt-dlp version gets its own folder: running downloads keep theirs during an update.
+    pub const UPDATE_IN_PLACE: bool = false;
+
     pub fn new(data_dir: PathBuf) -> Result<Self> {
         let exe = std::env::current_exe()?;
         let dir = exe.parent().context("app executable has no folder")?;
@@ -112,7 +115,10 @@ impl Platform {
     pub fn keep_alive(&self, _active: bool, _text: &str) {}
 
     /// Android only: a link shared from another app.
-    pub fn take_shared(&self) -> Option<String> {
+    pub async fn take_shared(&self) -> Option<String> {
         None
     }
+
+    /// Android only: make a new track visible to music players.
+    pub fn media_added(&self, _path: &std::path::Path) {}
 }

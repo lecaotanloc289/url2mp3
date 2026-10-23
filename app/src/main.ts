@@ -39,11 +39,19 @@ function dispatch(msg: Msg) {
   }
 }
 
-/** A link shared from another app: download it straight away. */
+/**
+ * Shared from another app: a link downloads straight away; other text (which any app could
+ * send) only fills the input, for the user to confirm.
+ */
 async function takeShared() {
   const text = await api.takeShared().catch(() => null);
   const input = text && sharedInput(text);
-  if (input) void enqueue([input]);
+  if (!input) return;
+  if (/^https?:\/\//.test(input)) {
+    void enqueue([input]);
+  } else {
+    $<HTMLTextAreaElement>("#input").value = input;
+  }
 }
 
 const ICONS = {
@@ -261,8 +269,9 @@ function renderBanners() {
 async function updateTools(force: boolean) {
   try {
     tools = await api.updateYtdlp(force);
-  } catch {
-    // The `tools` event already carried the error.
+  } catch (e) {
+    // Other errors already came as a `tools` event.
+    if (String(e) === "ytdlp-busy") toast(t("ytdlpBusy"));
   }
   renderBanners();
 }

@@ -59,8 +59,8 @@ fn keep_alive(jobs: JobsState, active: bool, text: String) {
 
 /// Android: the link last shared to the app from YouTube, TikTok, a browser…
 #[tauri::command]
-fn take_shared(jobs: JobsState) -> Option<String> {
-    jobs.platform().take_shared()
+async fn take_shared(jobs: JobsState<'_>) -> Result<Option<String>, String> {
+    Ok(jobs.platform().take_shared().await)
 }
 
 #[tauri::command]
