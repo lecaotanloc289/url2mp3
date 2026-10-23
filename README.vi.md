@@ -4,9 +4,31 @@
 
 Tải nhạc từ YouTube, TikTok (và ~1800 trang yt-dlp hỗ trợ: SoundCloud, Facebook…) về máy
 dưới dạng MP3 / M4A / Opus, kèm ảnh bìa và tên bài. Không quảng cáo, không hàng đợi, tải nhiều
-bài và nhiều kết nối cùng lúc. Có app cho máy tính (macOS, Windows) và lệnh chạy trong terminal.
+bài và nhiều kết nối cùng lúc. Có app cho macOS, Windows, Android và lệnh chạy trong terminal.
 
-## App máy tính
+## Tải về
+
+Ở [bản phát hành mới nhất](https://github.com/lecaotanloc289/url2mp3/releases/latest):
+
+| Máy | File |
+|---|---|
+| macOS chip Apple (M1 trở lên) | `url2mp3_<phiên bản>_aarch64.dmg` |
+| macOS chip Intel | `url2mp3_<phiên bản>_x64.dmg` |
+| Windows 10/11 (64-bit) | `url2mp3_<phiên bản>_x64-setup.exe` |
+| Android 11+ (đa số điện thoại) | `url2mp3_<phiên bản>_android-arm64.apk` |
+| Android 11+, máy 32-bit đời cũ | `url2mp3_<phiên bản>_android-armv7.apk` |
+
+Không có bản iPhone: iOS không cho app chạy yt-dlp.
+
+App chưa ký số nên lần mở đầu cần thêm một bước:
+
+- **macOS**: kéo url2mp3 vào Applications rồi mở. Nếu máy báo app "bị hỏng" hoặc "không thể
+  mở", vào System Settings → Privacy & Security → *Open Anyway*, hoặc chạy một lần trong
+  Terminal: `xattr -cr /Applications/url2mp3.app`.
+- **Windows**: nếu SmartScreen báo "Windows protected your PC", bấm *More info* → *Run anyway*.
+- **Android**: mở file APK, cho phép trình duyệt/trình quản lý file cài app khi được hỏi.
+
+## App
 
 Dán link hoặc gõ tên bài, bấm Tải về (⌘/Ctrl + Enter), theo dõi danh sách. Định dạng
 (MP3 / M4A / Opus), thư mục lưu, bitrate, số bài cùng lúc, giới hạn playlist, ảnh bìa và cookie
@@ -21,6 +43,11 @@ không chọn.
 - ffmpeg và QuickJS (trình chạy JavaScript yt-dlp cần cho YouTube) đóng sẵn trong app.
 - macOS: lần đầu lưu vào `~/Downloads`, máy hỏi quyền dùng thư mục đó. Đóng cửa sổ thì nhạc vẫn
   tải tiếp; bấm icon trên Dock để mở lại, ⌘Q để thoát hẳn.
+- Android: mọi thứ chạy ngay trên điện thoại (không cần server). Python, yt-dlp, ffmpeg và
+  QuickJS lấy từ [youtubedl-android](https://github.com/yausername/youtubedl-android); Cài đặt →
+  Cập nhật sẽ tải yt-dlp mới nhất. Nhạc lưu vào `Download/url2mp3`, app nghe nhạc tự thấy. Trong
+  YouTube, TikTok hay trình duyệt, bấm *Chia sẻ → url2mp3* là tải luôn; có thông báo giữ cho việc
+  tải chạy tiếp khi bạn chuyển sang app khác.
 
 Tự build (cần Rust, Node.js, pnpm):
 
@@ -31,6 +58,14 @@ pnpm sidecars                       # ffmpeg + QuickJS đúng phiên bản đã 
 pnpm tauri dev                      # chạy thử
 pnpm tauri build --bundles app,dmg  # macOS; Windows: --bundles nsis,msi
 ```
+
+Android: `pnpm tauri android build --apk --split-per-abi --target aarch64 --target armv7` (cần
+Android SDK + NDK, các target Android của rustup, và để ký bản phát hành: khoá mô tả trong
+`~/.url2mp3/keystore.properties` gồm `storeFile`, `password`, `keyAlias`). Project Android nằm ở
+`app/src-tauri/gen/android`; phần Kotlin là `ToolsPlugin.kt` và `DownloadService.kt`.
+
+`app/scripts/release-local.sh` build mọi file phát hành (2 file dmg, bộ cài Windows build chéo
+bằng cargo-xwin, 2 file APK, CLI) vào `release/<phiên bản>/`.
 
 `pnpm test` chạy test giao diện; `pnpm dev` rồi mở <http://localhost:1420/dev/mock.html> để xem
 giao diện trong trình duyệt với backend giả.

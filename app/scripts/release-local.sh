@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Builds every release file on a Mac, for when GitHub Actions can't run:
 #   macOS arm64 + x64 (.dmg), Windows x64 (NSIS setup.exe, cross-compiled with cargo-xwin),
-#   CLI archives for the same three targets.
+#   Android arm64 + armv7 (.apk, signed), CLI archives for macOS and Windows.
 # Output: release/<version>/ at the repository root.
 #
-# Needs: Homebrew `rustup` (keg-only), `llvm`, `lld`, `nsis`; `cargo install cargo-xwin`;
-# rustup targets x86_64-apple-darwin and x86_64-pc-windows-msvc.
+# Needs: Homebrew `rustup` (keg-only), `llvm`, `lld`, `nsis`, `openjdk@21`; `cargo install
+# cargo-xwin`; rustup targets x86_64-apple-darwin, x86_64-pc-windows-msvc, aarch64-linux-android,
+# armv7-linux-androideabi; Android SDK + NDK; the signing key (~/.url2mp3/keystore.properties).
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 export PATH="/opt/homebrew/opt/rustup/bin:/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:$HOME/.cargo/bin:$PATH"
+export JAVA_HOME=${JAVA_HOME:-/opt/homebrew/opt/openjdk@21}
+export ANDROID_HOME=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+export NDK_HOME=${NDK_HOME:-$(ls -d "$ANDROID_HOME"/ndk/* | sort -V | tail -1)}
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)
 out="$root/release/$version"
 mkdir -p "$out"
@@ -26,6 +30,11 @@ target=x86_64-pc-windows-msvc
 pnpm sidecars "$target"
 pnpm tauri build --runner cargo-xwin --target "$target" --bundles nsis
 cp "$root/target/$target/release/bundle/nsis/"*-setup.exe "$out/"
+
+pnpm tauri android build --apk --split-per-abi --target aarch64 --target armv7
+apks="$root/app/src-tauri/gen/android/app/build/outputs/apk"
+cp "$apks/arm64/release/app-arm64-release.apk" "$out/url2mp3_${version}_android-arm64.apk"
+cp "$apks/arm/release/app-arm-release.apk" "$out/url2mp3_${version}_android-armv7.apk"
 
 cd "$root"
 for target in aarch64-apple-darwin x86_64-apple-darwin; do

@@ -4,10 +4,33 @@
 
 Download music from YouTube, TikTok and the ~1,800 other sites yt-dlp supports (SoundCloud,
 Facebook…) as MP3, M4A or Opus, with cover art and tags. No ads, no queue, several tracks at
-once and several connections per track. It comes as a desktop app (macOS, Windows) and as a
-terminal command.
+once and several connections per track. It comes as an app for macOS, Windows and Android, and
+as a terminal command.
 
-## Desktop app
+## Download
+
+From the [latest release](https://github.com/lecaotanloc289/url2mp3/releases/latest):
+
+| System | File |
+|---|---|
+| macOS, Apple Silicon (M1 and later) | `url2mp3_<version>_aarch64.dmg` |
+| macOS, Intel | `url2mp3_<version>_x64.dmg` |
+| Windows 10/11 (64-bit) | `url2mp3_<version>_x64-setup.exe` |
+| Android 11+ (most phones) | `url2mp3_<version>_android-arm64.apk` |
+| Android 11+, older 32-bit phones | `url2mp3_<version>_android-armv7.apk` |
+
+There is no iPhone version: iOS doesn't let apps run yt-dlp.
+
+The apps aren't code-signed, so the first launch needs one extra step:
+
+- **macOS**: drag url2mp3 into Applications and open it. If macOS says it "is damaged" or "can't
+  be opened", go to System Settings → Privacy & Security → *Open Anyway*, or run
+  `xattr -cr /Applications/url2mp3.app` once in Terminal.
+- **Windows**: if SmartScreen says "Windows protected your PC", click *More info* → *Run anyway*.
+- **Android**: open the APK and allow installing apps from your browser or file manager when
+  asked.
+
+## App
 
 Paste links or type a song name, press Download (⌘/Ctrl + Enter), and watch the queue. Format
 (MP3 / M4A / Opus), output folder, bitrate, tracks at once, playlist limit, cover art and
@@ -22,6 +45,11 @@ unless you pick one.
 - ffmpeg and QuickJS (yt-dlp's JavaScript runtime for YouTube) ship inside the app.
 - macOS: the first download into `~/Downloads` asks for permission to use that folder. Closing
   the window keeps downloads running; click the Dock icon to bring it back, ⌘Q to quit.
+- Android: everything runs on the phone (no server). Python, yt-dlp, ffmpeg and QuickJS come
+  from [youtubedl-android](https://github.com/yausername/youtubedl-android), and Settings →
+  Update fetches the latest yt-dlp. Tracks go to `Download/url2mp3`, where music players find
+  them. In YouTube, TikTok or a browser, *Share → url2mp3* downloads the link straight away, and
+  a notification keeps downloads going when you switch to another app.
 
 Build it yourself (needs Rust, Node.js and pnpm):
 
@@ -32,6 +60,14 @@ pnpm sidecars                       # pinned ffmpeg + QuickJS for this machine, 
 pnpm tauri dev                      # run it
 pnpm tauri build --bundles app,dmg  # macOS; on Windows: --bundles nsis,msi
 ```
+
+Android: `pnpm tauri android build --apk --split-per-abi --target aarch64 --target armv7`
+(needs the Android SDK + NDK, rustup's Android targets and, for a signed release, a key described
+by `~/.url2mp3/keystore.properties` with `storeFile`, `password`, `keyAlias`). The Android project
+is in `app/src-tauri/gen/android`; its Kotlin side is `ToolsPlugin.kt` and `DownloadService.kt`.
+
+`app/scripts/release-local.sh` builds every release file (both dmgs, the Windows installer
+cross-compiled with cargo-xwin, both APKs, CLI archives) into `release/<version>/`.
 
 `pnpm test` runs the UI tests; `pnpm dev` then <http://localhost:1420/dev/mock.html> shows the
 UI in a browser with a fake backend.
