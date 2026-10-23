@@ -19,3 +19,9 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# youtubedl-android parses yt-dlp's and GitHub's JSON with Jackson (reflection), and our
+# ToolsPlugin is found by name from Rust (register_android_plugin) with annotated commands.
+-keep class com.yausername.** { *; }
+-keep class com.fasterxml.jackson.** { *; }
+-dontwarn com.fasterxml.jackson.**
+-keep class dev.lecaotanloc.url2mp3.** { *; }

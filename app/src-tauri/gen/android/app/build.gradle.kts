@@ -14,9 +14,30 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Release signing key, kept outside the repository: URL2MP3_KEYSTORE points at a properties
+// file with storeFile, password and keyAlias (default ~/.url2mp3/keystore.properties).
+val keystoreProperties = Properties().apply {
+    val path = System.getenv("URL2MP3_KEYSTORE")
+        ?: "${System.getProperty("user.home")}/.url2mp3/keystore.properties"
+    val propFile = file(path)
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     compileSdk = 37
     namespace = "dev.lecaotanloc.url2mp3"
+    signingConfigs {
+        if (keystoreProperties.containsKey("storeFile")) {
+            create("release") {
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("password")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("password")
+            }
+        }
+    }
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "dev.lecaotanloc.url2mp3"
@@ -40,8 +61,11 @@ android {
             }
         }
         getByName("release") {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+            // R8 breaks youtubedl-android's static initialisation (ExceptionInInitializerError
+            // in YoutubeDL.init), and the app's Java code is tiny next to its native libraries.
             optimization {
-               enable = true
+               enable = false
             }
             proguardFiles(
                 *fileTree(".") {

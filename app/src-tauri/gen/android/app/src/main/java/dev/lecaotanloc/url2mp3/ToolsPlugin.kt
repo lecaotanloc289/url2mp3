@@ -12,6 +12,7 @@ import app.tauri.plugin.Plugin
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import java.io.File
+import java.io.RandomAccessFile
 import kotlin.concurrent.thread
 
 @InvokeArg
@@ -35,11 +36,15 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
         thread {
             try {
                 val ctx = activity.applicationContext
+                val base = File(ctx.noBackupFilesDir, YoutubeDL.baseName)
+                val ytdlp = File(File(base, YoutubeDL.ytdlpDirName), YoutubeDL.ytdlpBin)
+                // A copy or update cut short leaves a truncated yt-dlp that init() keeps forever
+                // ("bad local file header"): drop it so init() copies the bundled one again.
+                if (ytdlp.exists() && !looksLikeZip(ytdlp)) ytdlp.delete()
                 YoutubeDL.getInstance().init(ctx)
                 FFmpeg.getInstance().init(ctx)
                 // Same layout and environment as YoutubeDL.execute() uses.
                 val bin = File(ctx.applicationInfo.nativeLibraryDir)
-                val base = File(ctx.noBackupFilesDir, YoutubeDL.baseName)
                 val packages = File(base, "packages")
                 val python = File(packages, "python")
                 val env = JSObject()
@@ -54,7 +59,7 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
                 env.put("PATH", "${System.getenv("PATH")}:$bin")
                 val ret = JSObject()
                 ret.put("python", File(bin, "libpython.so").absolutePath)
-                ret.put("ytdlpScript", File(File(base, YoutubeDL.ytdlpDirName), YoutubeDL.ytdlpBin).absolutePath)
+                ret.put("ytdlpScript", ytdlp.absolutePath)
                 ret.put("ffmpeg", File(bin, "libffmpeg.so").absolutePath)
                 ret.put("qjs", File(bin, "libqjs.so").absolutePath)
                 ret.put("env", env)
@@ -111,6 +116,21 @@ class ToolsPlugin(private val activity: Activity) : Plugin(activity) {
 
     override fun onNewIntent(intent: Intent) {
         remember(intent)
+    }
+
+    /** yt-dlp is a zip app: a complete one ends with the zip end-of-central-directory record. */
+    private fun looksLikeZip(file: File): Boolean = try {
+        RandomAccessFile(file, "r").use { f ->
+            val tail = ByteArray(minOf(f.length(), 65_557L).toInt())
+            f.seek(f.length() - tail.size)
+            f.readFully(tail)
+            (tail.size - 22 downTo 0).any { i ->
+                tail[i] == 0x50.toByte() && tail[i + 1] == 0x4b.toByte() &&
+                    tail[i + 2] == 0x05.toByte() && tail[i + 3] == 0x06.toByte()
+            }
+        }
+    } catch (e: Exception) {
+        false
     }
 
     private fun remember(intent: Intent?) {
