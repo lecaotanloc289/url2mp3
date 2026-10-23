@@ -11,7 +11,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU32, Ordering::Relaxed},
     },
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{Context, Result};
@@ -77,6 +77,8 @@ pub struct Jobs {
 impl Jobs {
     pub fn new(app: AppHandle, sidecars: Sidecars, data_dir: PathBuf, config_dir: PathBuf) -> Self {
         let settings_path = config_dir.join("settings.json");
+        let store = Store::new(data_dir.join("yt-dlp"));
+        store.prune();
         Self {
             app,
             client: reqwest::Client::builder()
@@ -84,7 +86,7 @@ impl Jobs {
                 .build()
                 .expect("reqwest client"),
             sidecars,
-            store: Store::new(data_dir.join("yt-dlp")),
+            store,
             settings: Mutex::new(settings::load(&settings_path)),
             settings_path,
             engine: tokio::sync::Mutex::new(None),
@@ -151,7 +153,7 @@ impl Jobs {
         }
         let tag = ytdlp::latest_tag(&self.client).await?;
         if current.as_ref().is_some_and(|c| c.version == tag) {
-            self.store.mark_checked(now)?;
+            let _ = self.store.mark_checked(now);
             return Ok(ToolsStatus::Ready { version: tag });
         }
 
@@ -162,14 +164,16 @@ impl Jobs {
         let root = self.store.root().to_owned();
         let installed =
             tokio::task::spawn_blocking(move || Store::new(root).install(&tag, &zip, &sums)).await??;
-        // The first run of fresh executables is slow on macOS (malware scan): pay it now.
-        let _ = url2mp3_core::command(&installed.exe)
-            .arg("--version")
-            .output()
-            .await;
-        self.store.mark_checked(now)?;
-        log::info!("yt-dlp {} installed", installed.version);
+        // New links use the new yt-dlp; running ones keep theirs, whose folder stays until the
+        // next start (Store::prune).
         *self.engine.lock().await = None;
+        log::info!("yt-dlp {} installed", installed.version);
+        // The first run of fresh executables is slow on macOS (malware scan): pay it now, but
+        // never wait on it forever.
+        let mut warm_up = url2mp3_core::command(&installed.exe);
+        warm_up.arg("--version").kill_on_drop(true);
+        let _ = tokio::time::timeout(Duration::from_secs(90), warm_up.output()).await;
+        let _ = self.store.mark_checked(now);
         Ok(ToolsStatus::Ready {
             version: installed.version,
         })
@@ -208,15 +212,28 @@ impl Jobs {
             .lock()
             .expect("running lock")
             .remove(&(generation, id));
-        if let Some(handle) = handle {
-            handle.abort();
-            // Its claims are given back only once the task is gone (see Engine::process).
-            let _ = handle.await;
-        }
+        // Already finished: nothing to cancel, and the UI already shows how it ended.
+        let Some(handle) = handle else { return };
+        handle.abort();
+        // Its claims are given back only once the task is gone (see Engine::process).
+        let _ = handle.await;
         let _ = self.app.emit(
             "engine",
             json!({ "gen": generation, "event": { "kind": "cancelled", "id": id } }),
         );
+    }
+
+    /// Stop every download before the app exits, so no yt-dlp or ffmpeg outlives it and the
+    /// engines remove their temp folders.
+    pub async fn shutdown(&self) {
+        let handles: Vec<_> = self.running.lock().expect("running lock").drain().collect();
+        for (_, handle) in &handles {
+            handle.abort();
+        }
+        for (_, handle) in handles {
+            let _ = handle.await;
+        }
+        *self.engine.lock().await = None;
     }
 
     async fn engine(&self) -> Result<(u32, Arc<Engine>)> {

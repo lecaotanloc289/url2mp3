@@ -86,18 +86,25 @@ impl Store {
         let pointer = self.root.join("current.tmp");
         fs::write(&pointer, tag)?;
         fs::rename(&pointer, self.root.join("current"))?;
-
-        for entry in fs::read_dir(&self.root)?.flatten() {
-            let old = entry.path();
-            if old.is_dir() && entry.file_name() != tag {
-                // A running yt-dlp on Windows keeps its files locked; the next install retries.
-                let _ = fs::remove_dir_all(old);
-            }
-        }
         Ok(Installed {
             version: tag.to_owned(),
             exe: dir.join(EXE),
         })
+    }
+
+    /// Remove every version but the current one, and half-unpacked leftovers. Only call it when
+    /// nothing runs yt-dlp (at startup): `install` leaves old versions in place because a
+    /// running download may still be using one.
+    pub fn prune(&self) {
+        let Some(current) = self.current() else { return };
+        let Ok(entries) = fs::read_dir(&self.root) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.path().is_dir() && entry.file_name() != current.version.as_str() {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
     }
 
     /// Whether a day has passed since we last asked GitHub for a newer yt-dlp.
@@ -245,21 +252,26 @@ mod tests {
     }
 
     #[test]
-    fn a_new_version_replaces_the_old_one() {
+    fn a_new_version_becomes_current_and_the_old_one_waits_for_prune() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_owned());
         let (one, two) = (release_zip("one"), release_zip("two"));
-        store.install("1", &one, &sums_for(&one)).unwrap();
+        let old = store.install("1", &one, &sums_for(&one)).unwrap();
 
         store.install("2", &two, &sums_for(&two)).unwrap();
 
         assert_eq!(store.current().unwrap().version, "2");
+        let exe = store.current().unwrap().exe;
+        assert!(fs::read_to_string(&exe).unwrap().contains("two"));
+        // A download started before the update still finds its yt-dlp.
+        assert!(old.exe.is_file());
+
+        fs::create_dir_all(dir.path().join("3.partial")).unwrap();
+        store.prune();
+
         assert!(!dir.path().join("1").exists());
-        assert!(
-            fs::read_to_string(store.current().unwrap().exe)
-                .unwrap()
-                .contains("two")
-        );
+        assert!(!dir.path().join("3.partial").exists());
+        assert!(exe.is_file());
     }
 
     #[test]

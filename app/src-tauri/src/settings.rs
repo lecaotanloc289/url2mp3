@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use url2mp3_core::{Format, Options};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -68,12 +69,31 @@ impl Settings {
     }
 }
 
-/// Missing or unreadable file: defaults, so a bad settings file never stops the app.
+/// Missing or unreadable file: defaults, so a bad settings file never stops the app. A field
+/// this version can't read (say a format from a newer version) falls back alone; the others
+/// are kept.
 pub fn load(path: &Path) -> Settings {
-    fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+    let Ok(bytes) = fs::read(path) else {
+        return Settings::default();
+    };
+    let Ok(Value::Object(saved)) = serde_json::from_slice::<Value>(&bytes) else {
+        log::warn!("{} is not a JSON object, using defaults", path.display());
+        return Settings::default();
+    };
+    let Ok(Value::Object(mut merged)) = serde_json::to_value(Settings::default()) else {
+        return Settings::default();
+    };
+    for (key, value) in saved {
+        let previous = merged.insert(key.clone(), value);
+        if serde_json::from_value::<Settings>(Value::Object(merged.clone())).is_err() {
+            log::warn!("ignoring setting {key} in {}", path.display());
+            match previous {
+                Some(v) => merged.insert(key, v),
+                None => merged.remove(&key),
+            };
+        }
+    }
+    serde_json::from_value(Value::Object(merged)).unwrap_or_default()
 }
 
 pub fn save(path: &Path, settings: &Settings) -> Result<()> {
@@ -123,6 +143,22 @@ mod tests {
         let settings = load(&path);
         assert_eq!(settings.format, Format::M4a);
         assert_eq!(settings.connections, 8);
+    }
+
+    #[test]
+    fn one_unreadable_field_does_not_reset_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"format":"flac","outDir":"/music","jobs":"many","cover":false}"#,
+        )
+        .unwrap();
+        let settings = load(&path);
+        assert_eq!(settings.format, Format::Mp3);
+        assert_eq!(settings.out_dir, Some(PathBuf::from("/music")));
+        assert_eq!(settings.jobs, Settings::default().jobs);
+        assert!(!settings.cover);
     }
 
     #[test]

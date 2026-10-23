@@ -59,13 +59,26 @@ async fn cancel(jobs: JobsState<'_>, generation: u32, id: Id) -> Result<(), Stri
     Ok(())
 }
 
+/// Show a downloaded track in Finder/Explorer. Only audio files we could have written, so the
+/// webview can't be used to point the file manager anywhere else.
 #[tauri::command]
 fn reveal(path: PathBuf) -> Result<(), String> {
+    let audio = path
+        .extension()
+        .is_some_and(|e| ["mp3", "m4a", "opus"].iter().any(|ok| e.eq_ignore_ascii_case(ok)));
+    if !audio || !path.is_file() {
+        return Err(format!("not a downloaded track: {}", path.display()));
+    }
     tauri_plugin_opener::reveal_item_in_dir(path).map_err(|e| e.to_string())
 }
 
+/// Open a page of this project (the new-version banner). Nothing else: a `file:` URL could run
+/// a program.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://github.com/lecaotanloc289/url2mp3/") {
+        return Err(format!("refusing to open {url}"));
+    }
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -139,15 +152,20 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building url2mp3")
-        .run(|app, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event
-                && let Some(window) = app.get_webview_window("main")
-            {
-                let _ = window.show();
-                let _ = window.set_focus();
+        .run(|app, event| match event {
+            // Exiting drops nothing on its own: stop yt-dlp/ffmpeg and clean up temp folders.
+            tauri::RunEvent::Exit => {
+                if let Some(jobs) = app.try_state::<Arc<Jobs>>() {
+                    tauri::async_runtime::block_on(jobs.shutdown());
+                }
             }
-            #[cfg(not(target_os = "macos"))]
-            let _ = (app, event);
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            _ => {}
         });
 }
