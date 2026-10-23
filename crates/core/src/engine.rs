@@ -12,13 +12,14 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
+use futures_util::future::join_all;
 use serde::Serialize;
 use tempfile::TempDir;
-use tokio::{sync::Semaphore, task::JoinSet};
+use tokio::sync::Semaphore;
 
 use crate::{
     download::{Downloader, Progress},
-    names::{is_network_error, path_key, sanitize},
+    names::{fit, is_network_error, path_key, sanitize},
     resolve::{Info, Ytdlp},
     tools::Tools,
     transcode::{self, Format, Tags},
@@ -183,9 +184,10 @@ impl Engine {
     }
 
     /// A link, playlist or search query → one or more tracks. Dropping the future (or aborting
-    /// its task) kills every yt-dlp/ffmpeg it started. Cancelling sends no event, and the
-    /// cancelled tracks give back their claims only once the task is gone: await the aborted
-    /// `JoinHandle` before starting the same link again, or it is taken for a duplicate.
+    /// its task) kills every yt-dlp/ffmpeg it started, playlist tracks included. Cancelling
+    /// sends no event, and the tracks give back their claims only once the future is dropped:
+    /// after aborting a task, await its `JoinHandle` before starting the same link again, or it
+    /// is taken for a duplicate.
     pub async fn process(self: Arc<Self>, id: Id, input: String) -> Vec<Outcome> {
         let search = !(input.starts_with("http://") || input.starts_with("https://"));
         let permit = self.sem.acquire().await.expect("semaphore never closed");
@@ -218,22 +220,29 @@ impl Engine {
         drop(permit);
 
         let entries: Vec<Info> = info.entries.into_iter().flatten().flatten().collect();
-        let name = sanitize(info.title.as_deref().unwrap_or("playlist"));
+        // Leave the tracks inside at least ~100 characters of path.
+        let name = fit(
+            &out,
+            &sanitize(info.title.as_deref().unwrap_or("playlist")),
+            &"x".repeat(100),
+        );
         self.emit(Event::Playlist {
             id,
             title: name.clone(),
             count: entries.len(),
         });
         let dir = out.join(name);
-        let mut set = JoinSet::new();
-        for entry in entries {
-            let (engine, dir, child) = (self.clone(), dir.clone(), self.next_id());
-            set.spawn(async move {
+        // Futures of this task rather than spawned tasks: cancelling the link drops them (and
+        // their yt-dlp/ffmpeg, and their claims) at once. The semaphore bounds the work.
+        let (engine, dir) = (&*self, &dir);
+        let tracks = entries.into_iter().map(|entry| {
+            let child = engine.next_id();
+            async move {
                 let _permit = engine.sem.acquire().await.expect("semaphore never closed");
-                engine.entry(child, Some(id), entry, &dir).await
-            });
-        }
-        set.join_all().await
+                engine.entry(child, Some(id), entry, dir).await
+            }
+        });
+        join_all(tracks).await
     }
 
     /// A playlist entry or search hit. Flat entries only hold a page URL and are probed first.
@@ -310,11 +319,13 @@ impl Engine {
         {
             return skip(Skip::Duplicate);
         }
-        let mut dest = dir.join(format!("{name}.{ext}"));
+        let suffix = format!(".{ext}");
+        let mut dest = dir.join(format!("{}{suffix}", fit(dir, &name, &suffix)));
         if !claims.take(path_key(&dest)) {
             // Same title twice in one run (e.g. two "original sound" TikToks): add the id.
             let vid = sanitize(info.id.as_deref().unwrap_or("2"));
-            dest = dir.join(format!("{name} [{vid}].{ext}"));
+            let suffix = format!(" [{vid}].{ext}");
+            dest = dir.join(format!("{}{suffix}", fit(dir, &name, &suffix)));
             if !claims.take(path_key(&dest)) {
                 return skip(Skip::Duplicate);
             }

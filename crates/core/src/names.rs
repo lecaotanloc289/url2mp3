@@ -43,12 +43,55 @@ pub(crate) fn sanitize(name: &str) -> String {
         out.push(c);
     }
     let out = out.trim_end().to_owned();
+    if out.is_empty() {
+        "untitled".into()
+    } else if is_reserved_on_windows(&out) {
+        format!("_{out}")
+    } else {
+        out
+    }
+}
+
+/// CON, NUL, COM1… name devices on Windows, with any extension: "nul.mp3" can't be a file.
+fn is_reserved_on_windows(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end()
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0')
+}
+
+/// Longest path we create, in UTF-16 units: Windows' MAX_PATH is 260 including the drive and
+/// the terminating NUL, and apps aren't long-path aware by default.
+const MAX_PATH: usize = 250;
+
+/// `name` shortened (whole characters) so that `dir/<name><suffix>` stays under MAX_PATH.
+pub(crate) fn fit(dir: &Path, name: &str, suffix: &str) -> String {
+    let fixed = dir.join(suffix).to_string_lossy().encode_utf16().count();
+    let mut out = String::new();
+    let mut used = fixed;
+    for c in name.chars() {
+        if used + c.len_utf16() > MAX_PATH {
+            break;
+        }
+        used += c.len_utf16();
+        out.push(c);
+    }
+    let out = out.trim_end().to_owned();
     if out.is_empty() { "untitled".into() } else { out }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_network_error, sanitize};
+    use std::path::Path;
+
+    use super::{fit, is_network_error, sanitize};
 
     #[test]
     fn classifies_network_errors() {
@@ -75,5 +118,25 @@ mod tests {
         assert_eq!(sanitize("...hidden"), "hidden");
         assert_eq!(sanitize("   "), "untitled");
         assert!(sanitize(&"ạ".repeat(200)).len() <= 180);
+    }
+
+    #[test]
+    fn windows_device_names_are_escaped() {
+        assert_eq!(sanitize("CON"), "_CON");
+        assert_eq!(sanitize("nul.remix"), "_nul.remix");
+        assert_eq!(sanitize("Com7"), "_Com7");
+        assert_eq!(sanitize("COM0"), "COM0");
+        assert_eq!(sanitize("Console"), "Console");
+        assert_eq!(sanitize("LPT10"), "LPT10");
+    }
+
+    #[test]
+    fn long_paths_are_cut_to_fit() {
+        let dir = Path::new("/Users/someone/Downloads/").join("p".repeat(150));
+        let name = fit(&dir, &"ạ".repeat(200), " [abc].mp3");
+        let full = dir.join(format!("{name} [abc].mp3"));
+        assert!(full.to_string_lossy().encode_utf16().count() <= 250);
+        assert!(name.chars().count() > 50, "{}", name.chars().count());
+        assert_eq!(fit(Path::new("/m"), "Song", ".mp3"), "Song");
     }
 }
