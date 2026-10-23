@@ -1,0 +1,133 @@
+name: release
+
+# A v* tag builds every app and CLI into a draft release, which is published by hand after a
+# quick test. A manual run builds the same files as workflow artifacts, without a release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: app,dmg
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis,msi
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: app/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install UI dependencies and sidecars
+        working-directory: app
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm sidecars ${{ matrix.target }}
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tauriScript: pnpm tauri
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          tagName: ${{ env.IS_TAG == 'true' && github.ref_name || '' }}
+          releaseName: url2mp3 ${{ github.ref_name }}
+          releaseDraft: true
+          uploadWorkflowArtifacts: true
+          releaseBody: |
+            ## Download
+
+            | System | File |
+            |---|---|
+            | macOS, Apple Silicon (M1–M4…) | `url2mp3_*_aarch64.dmg` |
+            | macOS, Intel | `url2mp3_*_x64.dmg` |
+            | Windows 10/11 | `url2mp3_*_x64-setup.exe` (or the `.msi`) |
+            | Android | `url2mp3_*.apk` |
+            | Command line | `url2mp3-cli-<system>` (needs yt-dlp, ffmpeg and deno on PATH) |
+
+            The app downloads yt-dlp (~50 MB) the first time it starts and keeps it up to date.
+
+            ## First launch: the app isn't code-signed
+
+            - **macOS**: drag url2mp3 to Applications. If macOS says the app "is damaged" or "can't
+              be opened", open System Settings → Privacy & Security → *Open Anyway*, or run
+              `xattr -cr /Applications/url2mp3.app` in Terminal once.
+            - **Windows**: if SmartScreen says "Windows protected your PC", click *More info* →
+              *Run anyway*.
+            - **Android**: allow installing apps from your browser or file manager when asked.
+
+            Only download content you have the right to.
+
+  cli:
+    needs: desktop
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+      - run: cargo build --release --locked -p url2mp3 --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name=url2mp3-cli-${{ matrix.target }}
+          cd target/${{ matrix.target }}/release
+          if [ "${{ runner.os }}" = Windows ]; then
+            7z a "$GITHUB_WORKSPACE/$name.zip" url2mp3.exe
+            echo "ASSET=$name.zip" >> "$GITHUB_ENV"
+          else
+            tar czf "$GITHUB_WORKSPACE/$name.tar.gz" url2mp3
+            echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ASSET }}
+          path: ${{ env.ASSET }}
+      - name: Attach to the draft release
+        if: env.IS_TAG == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" "$ASSET" --clobber

@@ -48,9 +48,11 @@ for (const [name, pin] of Object.entries(tools)) {
   }
 
   if (pin.member) {
-    // bsdtar (macOS, Windows runners) reads zip archives.
+    // bsdtar reads zip archives: macOS's tar, and Windows' own (not Git Bash's GNU tar).
+    const tar =
+      process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
     const work = mkdtempSync(join(tmpdir(), "sidecar-"));
-    execFileSync("tar", ["-xf", file, "-C", work, pin.member]);
+    execFileSync(tar, ["-xf", file, "-C", work, pin.member]);
     copyFileSync(join(work, pin.member), dest);
     rmSync(work, { recursive: true, force: true });
   } else {
