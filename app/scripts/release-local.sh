@@ -23,13 +23,13 @@ pnpm install --frozen-lockfile
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
   pnpm sidecars "$target"
   pnpm tauri build --target "$target" --bundles app,dmg
-  cp "$root/target/$target/release/bundle/dmg/"*.dmg "$out/"
+  cp "$root/target/$target/release/bundle/dmg/"*"_${version}_"*.dmg "$out/"
 done
 
 target=x86_64-pc-windows-msvc
 pnpm sidecars "$target"
 pnpm tauri build --runner cargo-xwin --target "$target" --bundles nsis
-cp "$root/target/$target/release/bundle/nsis/"*-setup.exe "$out/"
+cp "$root/target/$target/release/bundle/nsis/"*"_${version}_"*-setup.exe "$out/"
 
 pnpm tauri android build --apk --split-per-abi --target aarch64 --target armv7
 apks="$root/app/src-tauri/gen/android/app/build/outputs/apk"
