@@ -61,10 +61,20 @@ impl Tools {
     }
 
     fn command(&self, program: &Path) -> Command {
-        let mut cmd = Command::new(program);
+        let mut cmd = command(program);
         cmd.envs(self.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .kill_on_drop(true);
         cmd
     }
+}
+
+/// A command for a console program that, on Windows, doesn't flash a console window when
+/// started from a GUI app. Its own children (yt-dlp → qjs, ffmpeg) share that hidden console.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    cmd
 }

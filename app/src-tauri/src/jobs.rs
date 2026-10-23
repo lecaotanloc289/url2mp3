@@ -163,7 +163,7 @@ impl Jobs {
         let installed =
             tokio::task::spawn_blocking(move || Store::new(root).install(&tag, &zip, &sums)).await??;
         // The first run of fresh executables is slow on macOS (malware scan): pay it now.
-        let _ = tokio::process::Command::new(&installed.exe)
+        let _ = url2mp3_core::command(&installed.exe)
             .arg("--version")
             .output()
             .await;

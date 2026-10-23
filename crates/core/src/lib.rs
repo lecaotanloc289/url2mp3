@@ -11,7 +11,7 @@ mod transcode;
 use std::path::PathBuf;
 
 pub use engine::{Engine, Event, Id, Options, Outcome, Skip};
-pub use tools::Tools;
+pub use tools::{Tools, command};
 pub use transcode::Format;
 
 /// `~/Downloads`, the default output folder.
