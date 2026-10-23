@@ -7,6 +7,7 @@ import "./style.css";
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
 import { api, type Format, type Language, type Settings, type ToolsStatus } from "./api";
 import { hint, language, pickLanguage, setLanguage, t } from "./i18n";
+import { sharedInput } from "./share";
 import { empty, groupStats, isFinished, percent, reduce, summary, type Group, type Msg, type Row } from "./state";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
@@ -17,6 +18,9 @@ let tools: ToolsStatus = { phase: "missing" };
 let appUpdate: { version: string; url: string } | null = null;
 /** Inputs already retried once after a network failure. */
 const autoRetried = new Set<string>();
+let android = false;
+/** Running tracks the Android notification last showed. */
+let keptAlive = 0;
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
@@ -24,6 +28,22 @@ let frame = 0;
 function dispatch(msg: Msg) {
   state = reduce(state, msg);
   if (!frame) frame = requestAnimationFrame(() => ((frame = 0), renderList()));
+  // Not inside the frame: Android pauses rendering in the background, which is exactly when
+  // the foreground service matters.
+  if (android) {
+    const { active } = summary(state);
+    if (active !== keptAlive) {
+      keptAlive = active;
+      void api.keepAlive(active > 0, t("keepAlive", { active }));
+    }
+  }
+}
+
+/** A link shared from another app: download it straight away. */
+async function takeShared() {
+  const text = await api.takeShared().catch(() => null);
+  const input = text && sharedInput(text);
+  if (input) void enqueue([input]);
 }
 
 const ICONS = {
@@ -130,7 +150,7 @@ function renderRow(row: Row, index?: number): HTMLElement {
   const top = !row.parent;
   const buttons: HTMLButtonElement[] = [];
   if (!isFinished(row.status) && top) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(row.gen, row.id)));
-  if (row.path) buttons.push(iconButton("folder", t("reveal"), () => api.reveal(row.path!)));
+  if (row.path && !android) buttons.push(iconButton("folder", t("reveal"), () => api.reveal(row.path!)));
   if ((row.status === "failed" || row.status === "cancelled") && top) buttons.push(iconButton("retry", t("retry"), () => retry(row.key)));
   if (isFinished(row.status) && top) buttons.push(iconButton("remove", t("remove"), () => dispatch({ kind: "remove", key: row.key })));
   setActions(el, buttons);
@@ -317,6 +337,8 @@ function readSettingsForm(): Settings {
 // ── Wiring ───────────────────────────────────────────────────────────────────
 
 async function main() {
+  android = (await api.platform()) === "android";
+  document.body.classList.toggle("android", android);
   settings = await api.getSettings();
   applyLanguage();
   showFormat();
@@ -370,7 +392,15 @@ async function main() {
   renderBanners();
   void updateTools(false);
   api.checkAppUpdate().then((v) => ((appUpdate = v), renderBanners()), () => {});
-  $("#input").focus();
+  if (android) {
+    // Share → url2mp3 opens the app (or brings it back): pick the link up each time.
+    void takeShared();
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void takeShared();
+    });
+  } else {
+    $("#input").focus();
+  }
 }
 
 void main();

@@ -51,7 +51,7 @@ struct Target<'a> {
 
 impl Downloader {
     pub fn new(connections: usize) -> Result<Self> {
-        let client = Client::builder()
+        let client = crate::http_client()
             .http1_only()
             .tcp_nodelay(true)
             .connect_timeout(Duration::from_secs(10))

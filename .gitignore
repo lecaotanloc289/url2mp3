@@ -3,5 +3,7 @@
 /app/dist
 /app/.sidecar-cache
 /app/src-tauri/binaries
-/app/src-tauri/gen
+/app/src-tauri/gen/schemas
+/app/src-tauri/gen/android/app/src/main/jniLibs
+/app/src-tauri/gen/android/app/src/main/assets
 /release

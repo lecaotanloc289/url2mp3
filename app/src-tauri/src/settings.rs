@@ -50,7 +50,7 @@ impl Settings {
     pub fn options(&self) -> Result<Options> {
         let out = match &self.out_dir {
             Some(dir) => dir.clone(),
-            None => url2mp3_core::default_out_dir().context("no Downloads folder")?,
+            None => crate::platform::Platform::default_out_dir().context("no Downloads folder")?,
         };
         Ok(Options {
             format: self.format,

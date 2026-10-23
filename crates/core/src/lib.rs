@@ -18,3 +18,27 @@ pub use transcode::Format;
 pub fn default_out_dir() -> Option<PathBuf> {
     dirs::download_dir().or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
 }
+
+/// A reqwest client builder that trusts the system's certificate authorities. On Android the
+/// platform verifier would need JNI set-up, so the system CA folders are read directly.
+pub fn http_client() -> reqwest::ClientBuilder {
+    let builder = reqwest::Client::builder();
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(android_roots());
+    builder
+}
+
+/// The CAs Android trusts: the updatable Conscrypt store (Android 14+) and the system one.
+#[cfg(target_os = "android")]
+fn android_roots() -> Vec<reqwest::Certificate> {
+    [
+        "/apex/com.android.conscrypt/cacerts",
+        "/system/etc/security/cacerts",
+    ]
+    .iter()
+    .filter_map(|dir| std::fs::read_dir(dir).ok())
+    .flat_map(|dir| dir.flatten())
+    .filter_map(|file| std::fs::read(file.path()).ok())
+    .filter_map(|pem| reqwest::Certificate::from_pem(&pem).ok())
+    .collect()
+}

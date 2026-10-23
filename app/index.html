@@ -30,7 +30,7 @@
     <section class="input-deck">
       <textarea id="input" rows="3" spellcheck="false" autocomplete="off" data-i18n-placeholder="placeholder"></textarea>
       <div class="input-actions">
-        <span class="kbd" data-i18n="shortcut"></span>
+        <span class="kbd desktop-only" data-i18n="shortcut"></span>
         <button type="button" class="rec-btn" id="go">
           <span class="dot" aria-hidden="true"></span><span data-i18n="download"></span>
         </button>
@@ -60,7 +60,7 @@
           <span data-i18n="set.outDir"></span>
           <span class="row">
             <output id="out-dir"></output>
-            <button type="button" class="text-btn" id="choose-dir" data-i18n="set.choose"></button>
+            <button type="button" class="text-btn desktop-only" id="choose-dir" data-i18n="set.choose"></button>
           </span>
         </label>
         <div class="grid">
@@ -107,7 +107,7 @@
           <input type="checkbox" name="cover" />
           <span data-i18n="set.cover"></span>
         </label>
-        <label class="field">
+        <label class="field desktop-only">
           <span data-i18n="set.cookies"></span>
           <select name="cookiesBrowser">
             <option value="" data-i18n="set.none"></option>

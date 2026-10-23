@@ -1,6 +1,7 @@
-//! url2mp3 desktop app: the Tauri side of the UI in `app/src`.
+//! url2mp3 app (Windows, macOS, Android): the Tauri side of the UI in `app/src`.
 
 mod jobs;
+mod platform;
 mod settings;
 mod update;
 mod ytdlp;
@@ -11,7 +12,8 @@ use tauri::{Manager, State};
 use url2mp3_core::Id;
 
 use crate::{
-    jobs::{Jobs, Sidecars, ToolsStatus},
+    jobs::Jobs,
+    platform::{Platform, ToolsStatus},
     settings::Settings,
     update::NewVersion,
 };
@@ -35,7 +37,30 @@ async fn set_settings(jobs: JobsState<'_>, settings: Settings) -> Result<(), Str
 
 #[tauri::command]
 fn default_out_dir() -> Option<PathBuf> {
-    url2mp3_core::default_out_dir()
+    Platform::default_out_dir()
+}
+
+/// "android" or "desktop": the UI hides what a phone can't do (folder picker, browser cookies,
+/// show in folder).
+#[tauri::command]
+fn platform() -> &'static str {
+    if cfg!(target_os = "android") {
+        "android"
+    } else {
+        "desktop"
+    }
+}
+
+/// Android: a foreground notification keeps downloads going while the app is in the background.
+#[tauri::command]
+fn keep_alive(jobs: JobsState, active: bool, text: String) {
+    jobs.platform().keep_alive(active, &text);
+}
+
+/// Android: the link last shared to the app from YouTube, TikTok, a browser…
+#[tauri::command]
+fn take_shared(jobs: JobsState) -> Option<String> {
+    jobs.platform().take_shared()
 }
 
 #[tauri::command]
@@ -106,7 +131,7 @@ fn read_log(app: tauri::AppHandle) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -114,15 +139,17 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(platform::init());
+    builder
         .setup(|app| {
             let paths = app.path();
-            let jobs = Jobs::new(
-                app.handle().clone(),
-                Sidecars::beside_exe()?,
-                paths.app_data_dir()?,
-                paths.app_config_dir()?,
-            );
+            #[cfg(target_os = "android")]
+            let platform = Platform::new(app.handle(), paths.app_data_dir()?)?;
+            #[cfg(not(target_os = "android"))]
+            let platform = Platform::new(paths.app_data_dir()?)?;
+            let jobs = Jobs::new(app.handle().clone(), platform, paths.app_config_dir()?);
             app.manage(Arc::new(jobs));
             log::info!("url2mp3 {} started", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -131,6 +158,9 @@ pub fn run() {
             get_settings,
             set_settings,
             default_out_dir,
+            platform,
+            keep_alive,
+            take_shared,
             tools_status,
             update_ytdlp,
             enqueue,

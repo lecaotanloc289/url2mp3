@@ -659,7 +659,7 @@ dialog h2 {
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -692,12 +692,13 @@ output#out-dir {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  direction: rtl;
-  text-align: left;
 }
 
 select,
 input[type="number"] {
+  /* Long option texts must not widen the dialog. */
+  width: 100%;
+  min-width: 0;
   padding: 7px 9px;
   border-radius: 8px;
   border: 1px solid var(--line);
@@ -756,11 +757,16 @@ input:focus {
 
 @media (max-width: 480px) {
   .grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .kbd {
     display: none;
   }
+}
+
+/* Android: no folder picker, browser cookies or keyboard shortcut. */
+.android .desktop-only {
+  display: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

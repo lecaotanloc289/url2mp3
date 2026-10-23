@@ -64,6 +64,7 @@ const vi = {
   "set.save": "Lưu",
   "set.close": "Đóng",
   "set.legal": "Chỉ tải nội dung bạn có quyền tải.",
+  keepAlive: "Đang tải {active} bài…",
 };
 
 type Key = keyof typeof vi;
@@ -130,6 +131,7 @@ const en: Record<Key, string> = {
   "set.save": "Save",
   "set.close": "Close",
   "set.legal": "Only download content you have the right to.",
+  keepAlive: "Downloading {active} tracks…",
 };
 
 export const dictionaries: Record<Language, Record<Key, string>> = { vi, en };

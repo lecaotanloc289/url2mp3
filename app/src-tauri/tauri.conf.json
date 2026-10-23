@@ -25,7 +25,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "nsis", "msi"],
     "category": "Music",
     "shortDescription": "Download music from YouTube, TikTok and more as MP3",
     "copyright": "MIT License",
@@ -36,7 +35,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/ffmpeg", "binaries/qjs"],
     "macOS": {
       "minimumSystemVersion": "11.0"
     }

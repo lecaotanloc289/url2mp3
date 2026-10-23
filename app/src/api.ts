@@ -75,6 +75,9 @@ export const api = {
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   checkAppUpdate: () => invoke<NewVersion | null>("check_app_update"),
   readLog: () => invoke<string>("read_log"),
+  platform: () => invoke<"android" | "desktop">("platform"),
+  keepAlive: (active: boolean, text: string) => invoke<void>("keep_alive", { active, text }),
+  takeShared: () => invoke<string | null>("take_shared"),
   onEngine: (fn: (p: EnginePayload) => void): Promise<UnlistenFn> =>
     listen<EnginePayload>("engine", (e) => fn(e.payload)),
   onTools: (fn: (s: ToolsStatus) => void): Promise<UnlistenFn> =>
