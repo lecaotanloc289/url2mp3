@@ -4,3 +4,4 @@
 /app/.sidecar-cache
 /app/src-tauri/binaries
 /app/src-tauri/gen
+/release
