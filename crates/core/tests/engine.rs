@@ -59,6 +59,7 @@ fn fakes(dir: &Path) -> Tools {
     Tools {
         ytdlp: script(dir, "yt-dlp", FAKE_YTDLP),
         ffmpeg: script(dir, "ffmpeg", FAKE_FFMPEG),
+        ytdlp_args: Vec::new(),
         js_runtime: None,
         env: Vec::new(),
     }
@@ -343,4 +344,28 @@ async fn passes_js_runtime_and_env_to_ytdlp() {
         log.lines().all(|l| l.contains("--js-runtimes deno:/opt/deno")),
         "{log}"
     );
+}
+
+/// Android runs yt-dlp as `libpython.so <yt-dlp script> …`, and an app's own ffmpeg isn't on
+/// PATH, so yt-dlp is told where it is.
+#[tokio::test]
+async fn ytdlp_args_come_first_and_ffmpeg_location_is_passed() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let log = bin.path().join("log");
+    let mut tools = fakes(bin.path());
+    tools.ytdlp_args = vec!["/data/yt-dlp".into()];
+    tools.env.push(("FAKE_LOG".into(), log.clone().into()));
+    let ffmpeg = tools.ffmpeg.display().to_string();
+    let (engine, _) = engine(tools, out.path()).await;
+
+    process(&engine, LINK).await;
+
+    let log = fs::read_to_string(log).unwrap();
+    assert!(log.lines().all(|l| l.starts_with("/data/yt-dlp ")), "{log}");
+    assert!(
+        log.lines()
+            .all(|l| l.contains(&format!("--ffmpeg-location {ffmpeg}"))),
+        "{log}"
+    );
+    assert!(Tools::from_path().ytdlp_args.is_empty());
 }

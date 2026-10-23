@@ -247,6 +247,7 @@ impl Jobs {
             ffmpeg: self.sidecars.ffmpeg.clone(),
             js_runtime: Some(format!("quickjs:{}", self.sidecars.qjs.display())),
             env: Vec::new(),
+            ytdlp_args: Vec::new(),
         };
         let options = self.settings().options()?;
         let generation = self.generation.fetch_add(1, Relaxed) + 1;

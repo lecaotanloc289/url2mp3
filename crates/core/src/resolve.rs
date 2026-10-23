@@ -135,6 +135,13 @@ impl Ytdlp {
         if let Some(js) = &tools.js_runtime {
             base.extend(["--js-runtimes".into(), js.clone()]);
         }
+        // An app's own ffmpeg isn't on PATH; yt-dlp needs it for HLS/DASH downloads.
+        if tools.ffmpeg.is_absolute() {
+            base.extend([
+                "--ffmpeg-location".into(),
+                tools.ffmpeg.to_string_lossy().into_owned(),
+            ]);
+        }
         Self { tools, base }
     }
 

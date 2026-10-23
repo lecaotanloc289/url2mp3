@@ -12,6 +12,9 @@ use tokio::process::Command;
 #[derive(Clone, Debug)]
 pub struct Tools {
     pub ytdlp: PathBuf,
+    /// Arguments before yt-dlp's own, e.g. the yt-dlp script when `ytdlp` is a Python
+    /// interpreter (Android).
+    pub ytdlp_args: Vec<OsString>,
     pub ffmpeg: PathBuf,
     /// Passed to yt-dlp as `--js-runtimes` (e.g. `deno:/path/to/deno`) for YouTube's signature
     /// challenge. None: yt-dlp's default, deno on PATH.
@@ -24,6 +27,7 @@ impl Tools {
     pub fn from_path() -> Self {
         Self {
             ytdlp: "yt-dlp".into(),
+            ytdlp_args: Vec::new(),
             ffmpeg: "ffmpeg".into(),
             js_runtime: None,
             env: Vec::new(),
@@ -53,7 +57,9 @@ impl Tools {
     }
 
     pub(crate) fn ytdlp_command(&self) -> Command {
-        self.command(&self.ytdlp)
+        let mut cmd = self.command(&self.ytdlp);
+        cmd.args(&self.ytdlp_args);
+        cmd
     }
 
     pub(crate) fn ffmpeg_command(&self) -> Command {
