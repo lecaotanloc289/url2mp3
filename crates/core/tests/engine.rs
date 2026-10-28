@@ -8,10 +8,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use url2mp3_core::{Engine, Event, Format, Options, Outcome, Skip, Tools};
+use url2mp3_core::{Cut, Engine, Event, Format, Options, Outcome, Range, Resolved, Skip, Tools};
 
 /// `-J` prints a track (or a playlist for links containing "playlist"); otherwise writes
-/// "audio" to the `-o` path. Links containing "bad" fail like a private video.
+/// "audio" to the `-o` path (with `FAKE_SLEEP`: a partial "aud", then the full file after that
+/// many seconds). Links containing "bad" fail like a private video.
 const FAKE_YTDLP: &str = r#"#!/bin/sh
 [ -n "$FAKE_LOG" ] && echo "$@" >> "$FAKE_LOG"
 json=0; out=""; prev=""
@@ -27,8 +28,9 @@ esac
 if [ "$json" = 1 ]; then
   # Links containing "other" are another video with the same title.
   case "$prev" in *other*) id=xyz;; *) id=abc;; esac
-  echo "{\"id\":\"$id\",\"title\":\"Fake Song\",\"uploader\":\"Tester\",\"webpage_url\":\"https://example.com/v/$id\",\"acodec\":\"mp3\"}"
+  echo "{\"id\":\"$id\",\"title\":\"Fake Song\",\"uploader\":\"Tester\",\"webpage_url\":\"https://example.com/v/$id\",\"acodec\":\"mp3\",\"duration\":272,\"extractor_key\":\"Youtube\"}"
 else
+  if [ -n "$FAKE_SLEEP" ]; then printf 'aud' > "$out"; sleep "$FAKE_SLEEP"; fi
   printf 'audio' > "$out"
 fi
 "#;
@@ -368,4 +370,276 @@ async fn ytdlp_args_come_first_and_ffmpeg_location_is_passed() {
         "{log}"
     );
     assert!(Tools::from_path().ytdlp_args.is_empty());
+}
+
+async fn resolve_track(engine: &Arc<Engine>, input: &str) -> url2mp3_core::Track {
+    match engine.resolve(engine.next_id(), input).await.unwrap() {
+        Resolved::Track(t) => t,
+        Resolved::Playlist { .. } => panic!("{input} resolved to a playlist"),
+    }
+}
+
+fn trim(label: &str) -> Cut {
+    Cut {
+        keep: vec![Range {
+            start: 0.0,
+            end: 10.0,
+        }],
+        label: label.into(),
+    }
+}
+
+#[tokio::test]
+async fn resolve_then_save_from_cached_audio_never_runs_ytdlp_download() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let log = bin.path().join("log");
+    let mut tools = fakes(bin.path());
+    tools.env.push(("FAKE_LOG".into(), log.clone().into()));
+    let (engine, events) = engine(tools, out.path()).await;
+
+    let track = resolve_track(&engine, LINK).await;
+    assert_eq!(track.title, "Fake Song");
+    assert_eq!(track.duration, Some(272.0));
+    assert!(track.youtube);
+    assert_eq!(track.video_id.as_deref(), Some("abc"));
+    assert!(!track.needs_probe());
+    assert_eq!(track.codec(), "mp3");
+    assert_eq!(kinds(&events), ["probing"]);
+
+    let cached = bin.path().join("cached.audio");
+    fs::write(&cached, b"cached").unwrap();
+    let outcome = engine.save(7, None, &track, None, Some(&cached), None).await;
+
+    assert_eq!(outcome, Outcome::Done(6));
+    assert_eq!(fs::read(out.path().join("Fake Song.mp3")).unwrap(), b"cached");
+    assert_eq!(
+        fs::read(&cached).unwrap(),
+        b"cached",
+        "caller's audio is left alone"
+    );
+    assert_eq!(kinds(&events), ["probing", "track", "converting", "done"]);
+    let log = fs::read_to_string(log).unwrap();
+    assert_eq!(log.lines().count(), 1, "only the probe: {log}");
+    assert!(log.contains("-J") && !log.contains("-o "), "{log}");
+}
+
+/// The app starts a new engine when settings change; tracks in its tray keep their audio.
+#[tokio::test]
+async fn cached_audio_is_saved_by_an_engine_with_another_format_without_fetching() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (first, _) = engine(fakes(bin.path()), out.path()).await;
+    let track = resolve_track(&first, LINK).await;
+    let cached = bin.path().join("cached.audio");
+    fs::write(&cached, b"cached").unwrap();
+
+    let log = bin.path().join("log");
+    let mut tools = fakes(bin.path());
+    tools.env.push(("FAKE_LOG".into(), log.clone().into()));
+    let opts = Options {
+        format: Format::M4a,
+        ..options(out.path())
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = {
+        let events = events.clone();
+        move |e: Event| events.lock().unwrap().push(e)
+    };
+    let second = Engine::start(tools, opts, sink).await.unwrap();
+
+    let outcome = second.save(0, None, &track, None, Some(&cached), None).await;
+
+    assert_eq!(outcome, Outcome::Done(6));
+    assert_eq!(fs::read(out.path().join("Fake Song.m4a")).unwrap(), b"cached");
+    assert_eq!(kinds(&events), ["track", "converting", "done"]);
+    assert!(!log.exists(), "yt-dlp ran: {:?}", fs::read_to_string(&log));
+}
+
+#[tokio::test]
+async fn trimmed_save_sits_next_to_the_whole_one_and_is_numbered() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (engine, events) = engine(fakes(bin.path()), out.path()).await;
+    let track = resolve_track(&engine, LINK).await;
+    let cut = trim("đã cắt");
+
+    assert_eq!(
+        engine.save(1, None, &track, None, None, None).await,
+        Outcome::Done(5)
+    );
+    assert_eq!(
+        engine.save(2, None, &track, None, None, Some(&cut)).await,
+        Outcome::Done(5)
+    );
+    assert_eq!(
+        engine.save(3, None, &track, None, None, Some(&cut)).await,
+        Outcome::Done(5)
+    );
+
+    for name in [
+        "Fake Song.mp3",
+        "Fake Song (đã cắt).mp3",
+        "Fake Song (đã cắt 2).mp3",
+    ] {
+        assert!(out.path().join(name).exists(), "{name}");
+    }
+    let events = events.lock().unwrap();
+    assert!(!events.iter().any(|e| matches!(e, Event::Skipped { .. })));
+    let done: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Done { id, path, .. } => Some((*id, path.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        done,
+        [
+            (1, out.path().join("Fake Song.mp3")),
+            (2, out.path().join("Fake Song (đã cắt).mp3")),
+            (3, out.path().join("Fake Song (đã cắt 2).mp3")),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn trimmed_save_of_a_file_already_in_the_folder_is_saved_alongside() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    fs::write(out.path().join("Fake Song.mp3"), b"old").unwrap();
+    fs::write(out.path().join("Fake Song (trimmed).mp3"), b"old").unwrap();
+    let (engine, _) = engine(fakes(bin.path()), out.path()).await;
+
+    // The whole one is skipped and keeps the video's claim; the trimmed one is not blocked.
+    assert_eq!(process(&engine, LINK).await, vec![Outcome::Skipped]);
+    let track = resolve_track(&engine, LINK).await;
+    let outcome = engine
+        .save(9, None, &track, None, None, Some(&trim("trimmed")))
+        .await;
+
+    assert_eq!(outcome, Outcome::Done(5));
+    assert_eq!(
+        fs::read(out.path().join("Fake Song (trimmed).mp3")).unwrap(),
+        b"old"
+    );
+    assert!(out.path().join("Fake Song (trimmed 2).mp3").exists());
+}
+
+#[tokio::test]
+async fn trimmed_save_with_nothing_kept_fails() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (engine, events) = engine(fakes(bin.path()), out.path()).await;
+    let track = resolve_track(&engine, LINK).await;
+    let cut = Cut {
+        keep: vec![],
+        label: "đã cắt".into(),
+    };
+
+    let outcome = engine.save(1, None, &track, None, None, Some(&cut)).await;
+
+    assert_eq!(outcome, Outcome::Failed { network: false });
+    let last = events.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        last,
+        Event::Failed {
+            id: 1,
+            parent: None,
+            label: "Fake Song".into(),
+            message: "không còn đoạn nào để lưu".into(),
+            network: false,
+        }
+    );
+    assert!(!out.path().join("Fake Song (đã cắt).mp3").exists());
+}
+
+#[tokio::test]
+async fn whole_destination_matches_where_a_whole_save_lands() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (engine, events) = engine(fakes(bin.path()), out.path()).await;
+    let last_done = || match events.lock().unwrap().last().cloned() {
+        Some(Event::Done { path, .. }) => path,
+        other => panic!("{other:?}"),
+    };
+
+    let track = resolve_track(&engine, LINK).await;
+    let expected = engine.whole_destination(&track, None);
+    assert_eq!(expected, out.path().join("Fake Song.mp3"));
+    assert_eq!(
+        engine.save(1, None, &track, None, None, None).await,
+        Outcome::Done(5)
+    );
+    assert_eq!(last_done(), expected);
+
+    let Resolved::Playlist { title, tracks } = engine
+        .resolve(2, "https://example.com/playlist?list=1")
+        .await
+        .unwrap()
+    else {
+        panic!("not a playlist");
+    };
+    assert_eq!(title, "Mix");
+    assert_eq!(tracks.len(), 1);
+    assert!(tracks[0].needs_probe());
+    let entry = engine.probe_track(&tracks[0]).await.unwrap();
+    assert!(!entry.needs_probe());
+    let expected = engine.whole_destination(&entry, Some(&title));
+    assert_eq!(expected, out.path().join("Mix/Fake Song.mp3"));
+    // A new engine: the first one already holds this video's claim.
+    let (other, other_events) = self::engine(fakes(bin.path()), out.path()).await;
+    assert_eq!(
+        other.save(3, Some(2), &entry, Some(&title), None, None).await,
+        Outcome::Done(5)
+    );
+    assert!(matches!(
+        other_events.lock().unwrap().last(),
+        Some(Event::Done { path, .. }) if *path == expected
+    ));
+}
+
+#[tokio::test]
+async fn fetch_writes_the_audio_to_the_callers_path() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (engine, events) = engine(fakes(bin.path()), out.path()).await;
+    let track = resolve_track(&engine, LINK).await;
+    let to = bin.path().join("cache.audio");
+
+    engine.fetch(4, &track, &to).await.unwrap();
+
+    assert_eq!(fs::read(&to).unwrap(), b"audio");
+    assert!(!bin.path().join("cache.audio.part").exists());
+    assert!(matches!(
+        events.lock().unwrap().last(),
+        Some(Event::Fallback { id: 4, reason: None })
+    ));
+}
+
+#[tokio::test]
+async fn cancelled_fetch_leaves_no_files() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let mut tools = fakes(bin.path());
+    // Short enough that a yt-dlp left running would write its file before the test ends.
+    tools.env.push(("FAKE_SLEEP".into(), "1".into()));
+    let (engine, _) = engine(tools, out.path()).await;
+    let track = resolve_track(&engine, LINK).await;
+    let cache = tempfile::tempdir().unwrap();
+    let to = cache.path().join("cache.audio");
+
+    let task = tokio::spawn({
+        let (engine, to) = (engine.clone(), to.clone());
+        async move { engine.fetch(0, &track, &to).await }
+    });
+    // Abort mid-download, once yt-dlp has written part of the file.
+    let part = cache.path().join("cache.audio.part");
+    for _ in 0..300 {
+        if part.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(part.exists(), "fetch writes to <to>.part");
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    // Past the fake's sleep: a surviving yt-dlp would have written `<to>.part` by now.
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+
+    assert!(!to.exists());
+    let left: Vec<_> = fs::read_dir(cache.path()).unwrap().collect();
+    assert!(left.is_empty(), "{left:?}");
 }

@@ -23,7 +23,7 @@ pub struct Info {
     pub acodec: Option<String>,
     /// Length in seconds, when the extractor knows it.
     pub duration: Option<f64>,
-    #[allow(dead_code)]
+    /// yt-dlp's extractor, e.g. "Youtube".
     pub extractor_key: Option<String>,
     pub filesize: Option<f64>,
     pub http_headers: Option<HashMap<String, String>>,
