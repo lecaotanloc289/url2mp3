@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { Range } from "./cut";
 
 export type Format = "mp3" | "m4a" | "opus";
 export type Language = "vi" | "en";
@@ -36,8 +37,43 @@ export type EngineEvent =
   | { kind: "cancelled"; id: number };
 
 export interface EnginePayload {
-  gen: number;
   event: EngineEvent;
+}
+
+/** The tray: what `add` found, before anything is saved. */
+export type TrayEvent =
+  | {
+      kind: "added";
+      id: number;
+      parent: number | null;
+      /** What the user typed; null for playlist tracks and for a re-send after `prepare`. */
+      input: string | null;
+      title: string;
+      artist: string | null;
+      thumbnail: string | null;
+      duration: number | null;
+      youtube: boolean;
+    }
+  | { kind: "playlist"; id: number; input: string; title: string; count: number };
+
+export interface Segment {
+  start: number;
+  end: number;
+  category: string;
+}
+
+export interface Prepared {
+  duration: number | null;
+  /** 1200 buckets, 0..1. */
+  peaks: number[];
+  suggestions: Segment[];
+  /** The whole-file destination already exists. */
+  exists: boolean;
+}
+
+export interface SaveItem {
+  id: number;
+  cut: { keep: Range[]; label: string } | null;
 }
 
 export type ToolsStatus =
@@ -69,8 +105,13 @@ export const api = {
   defaultOutDir: () => invoke<string | null>("default_out_dir"),
   toolsStatus: () => invoke<ToolsStatus>("tools_status"),
   updateYtdlp: (force: boolean) => invoke<ToolsStatus>("update_ytdlp", { force }),
-  enqueue: (inputs: string[]) => invoke<number>("enqueue", { inputs }),
-  cancel: (generation: number, id: number) => invoke<void>("cancel", { generation, id }),
+  add: (inputs: string[]) => invoke<number>("add", { inputs }),
+  prepare: (id: number) => invoke<Prepared>("prepare", { id }),
+  /** AAC in MP4: wrap in a Blob of type audio/mp4. */
+  previewAudio: (id: number) => invoke<ArrayBuffer>("preview_audio", { id }),
+  save: (items: SaveItem[]) => invoke<void>("save", { items }),
+  discard: (ids: number[]) => invoke<void>("discard", { ids }),
+  cancel: (id: number) => invoke<void>("cancel", { id }),
   reveal: (path: string) => invoke<void>("reveal", { path }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   checkAppUpdate: () => invoke<NewVersion | null>("check_app_update"),
@@ -80,6 +121,8 @@ export const api = {
   takeShared: () => invoke<string | null>("take_shared"),
   onEngine: (fn: (p: EnginePayload) => void): Promise<UnlistenFn> =>
     listen<EnginePayload>("engine", (e) => fn(e.payload)),
+  onTray: (fn: (e: TrayEvent) => void): Promise<UnlistenFn> =>
+    listen<TrayEvent>("tray", (e) => fn(e.payload)),
   onTools: (fn: (s: ToolsStatus) => void): Promise<UnlistenFn> =>
     listen<ToolsStatus>("tools", (e) => fn(e.payload)),
 };

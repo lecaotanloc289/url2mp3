@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
-import type { EngineEvent } from "./api";
-import { empty, groupStats, percent, reduce, summary, type QueueState } from "./state";
+import type { EngineEvent, TrayEvent } from "./api";
+import { formatTime } from "./cut";
+import { empty, groupStats, percent, ready, reduce, summary, type QueueState } from "./state";
 
-const run = (events: EngineEvent[], gen = 1, state: QueueState = empty()) =>
-  events.reduce((s, event) => reduce(s, { kind: "engine", gen, event }), state);
+const run = (events: EngineEvent[], state: QueueState = empty()) =>
+  events.reduce((s, event) => reduce(s, { kind: "engine", event }), state);
+const tray = (events: TrayEvent[], state: QueueState = empty()) =>
+  events.reduce((s, event) => reduce(s, { kind: "tray", event }), state);
+
+const added = (id: number, over: Partial<Extract<TrayEvent, { kind: "added" }>> = {}): TrayEvent => ({
+  kind: "added",
+  id,
+  parent: null,
+  input: "https://youtu.be/x",
+  title: "Song",
+  artist: "Band",
+  thumbnail: null,
+  duration: 272,
+  youtube: true,
+  ...over,
+});
 
 describe("single track", () => {
   const events: EngineEvent[] = [
@@ -14,8 +30,8 @@ describe("single track", () => {
 
   it("goes from probing to downloading with progress", () => {
     const s = run(events);
-    expect(s.order).toEqual(["1:0"]);
-    const row = s.rows["1:0"];
+    expect(s.order).toEqual(["0"]);
+    const row = s.rows["0"];
     expect(row).toMatchObject({
       input: "https://youtu.be/x",
       title: "Song",
@@ -33,14 +49,14 @@ describe("single track", () => {
       { kind: "converting", id: 0 },
       { kind: "done", id: 0, path: "/m/Song.mp3", bytes: 300, secs: 1 },
     ]);
-    expect(s.rows["1:0"]).toMatchObject({ status: "done", path: "/m/Song.mp3" });
-    expect(percent(s.rows["1:0"])).toBe(100);
+    expect(s.rows["0"]).toMatchObject({ status: "done", path: "/m/Song.mp3" });
+    expect(percent(s.rows["0"])).toBe(100);
     expect(summary(s)).toEqual({ done: 1, failed: 0, active: 0 });
   });
 
   it("keeps the yt-dlp fallback visible", () => {
     const s = run([...events, { kind: "fallback", id: 0, reason: "HTTP 403" }]);
-    expect(s.rows["1:0"].status).toBe("fallback");
+    expect(s.rows["0"].status).toBe("fallback");
   });
 });
 
@@ -56,17 +72,17 @@ describe("playlist", () => {
   ]);
 
   it("turns the root row into a group holding its tracks", () => {
-    expect(s.order).toEqual(["1:0"]);
-    expect(s.rows["1:0"]).toBeUndefined();
-    const group = s.groups["1:0"];
+    expect(s.order).toEqual(["0"]);
+    expect(s.rows["0"]).toBeUndefined();
+    const group = s.groups["0"];
     expect(group).toMatchObject({ title: "Chill", count: 3, input: "https://youtube.com/playlist?list=1" });
-    expect(group.children).toEqual(["1:1", "1:2", "1:3"]);
-    expect(s.rows["1:2"]).toMatchObject({ status: "exists", path: "/m/Chill/B.mp3", parent: "1:0" });
-    expect(s.rows["1:3"]).toMatchObject({ status: "failed", message: "Video unavailable", title: "C" });
+    expect(group.children).toEqual(["1", "2", "3"]);
+    expect(s.rows["2"]).toMatchObject({ status: "exists", path: "/m/Chill/B.mp3", parent: "0" });
+    expect(s.rows["3"]).toMatchObject({ status: "failed", message: "Video unavailable", title: "C" });
   });
 
   it("counts finished and failed tracks", () => {
-    expect(groupStats(s, s.groups["1:0"])).toEqual({ finished: 2, failed: 1, count: 3 });
+    expect(groupStats(s, s.groups["0"])).toEqual({ finished: 2, failed: 1, count: 3 });
     expect(summary(s)).toEqual({ done: 2, failed: 1, active: 0 });
   });
 
@@ -76,12 +92,11 @@ describe("playlist", () => {
         { kind: "probing", id: 4, parent: 0, label: "D" },
         { kind: "cancelled", id: 0 },
       ],
-      1,
       s,
     );
-    expect(t.groups["1:0"].cancelled).toBe(true);
-    expect(t.rows["1:4"].status).toBe("cancelled");
-    expect(t.rows["1:1"].status).toBe("done");
+    expect(t.groups["0"].cancelled).toBe(true);
+    expect(t.rows["4"].status).toBe("cancelled");
+    expect(t.rows["1"].status).toBe("done");
   });
 });
 
@@ -91,13 +106,7 @@ describe("rows", () => {
       { kind: "probing", id: 0, parent: null, label: "x" },
       { kind: "skipped", id: 0, parent: null, title: "Song", reason: { kind: "duplicate" } },
     ]);
-    expect(s.rows["1:0"]).toMatchObject({ status: "duplicate", title: "Song" });
-  });
-
-  it("generations never collide", () => {
-    let s = run([{ kind: "probing", id: 0, parent: null, label: "a" }], 1);
-    s = run([{ kind: "probing", id: 0, parent: null, label: "b" }], 2, s);
-    expect(s.order).toEqual(["1:0", "2:0"]);
+    expect(s.rows["0"]).toMatchObject({ status: "duplicate", title: "Song" });
   });
 
   it("ignores events for rows it never saw", () => {
@@ -110,7 +119,7 @@ describe("rows", () => {
       { kind: "probing", id: 0, parent: null, label: "x" },
       { kind: "cancelled", id: 0 },
     ]);
-    expect(s.rows["1:0"].status).toBe("cancelled");
+    expect(s.rows["0"].status).toBe("cancelled");
   });
 
   it("remove and clear finished", () => {
@@ -122,9 +131,110 @@ describe("rows", () => {
       { kind: "done", id: 2, path: "/c.mp3", bytes: 1, secs: 1 },
     ]);
     s = reduce(s, { kind: "clearFinished" });
-    expect(s.order).toEqual(["1:0", "1:1"]);
-    s = reduce(s, { kind: "remove", key: "1:1" });
-    expect(s.order).toEqual(["1:0"]);
-    expect(s.rows["1:1"]).toBeUndefined();
+    expect(s.order).toEqual(["0", "1"]);
+    s = reduce(s, { kind: "remove", key: "1" });
+    expect(s.order).toEqual(["0"]);
+    expect(s.rows["1"]).toBeUndefined();
+  });
+});
+
+describe("tray", () => {
+  const probing: EngineEvent = { kind: "probing", id: 0, parent: null, label: "https://youtu.be/x" };
+  const one = () => tray([added(0)], run([probing]));
+
+  it('"added" puts a ready row with duration and no cuts', () => {
+    const s = one();
+    expect(s.rows["0"]).toMatchObject({
+      status: "ready",
+      duration: 272,
+      removed: [],
+      input: "https://youtu.be/x",
+      youtube: true,
+    });
+    expect(ready(s)).toEqual(["0"]);
+  });
+
+  it("playlist then children gives a group of ready rows", () => {
+    const s = tray(
+      [
+        { kind: "playlist", id: 0, input: "https://youtube.com/playlist?list=1", title: "Chill", count: 3 },
+        added(1, { parent: 0, input: null, title: "A" }),
+        added(2, { parent: 0, input: null, title: "B" }),
+        added(3, { parent: 0, input: null, title: "C" }),
+      ],
+      run([{ kind: "probing", id: 0, parent: null, label: "https://youtube.com/playlist?list=1" }]),
+    );
+    expect(s.rows["0"]).toBeUndefined();
+    expect(s.groups["0"]).toMatchObject({ title: "Chill", count: 3, input: "https://youtube.com/playlist?list=1" });
+    expect(s.groups["0"].children).toEqual(["1", "2", "3"]);
+    expect(ready(s)).toEqual(["1", "2", "3"]);
+  });
+
+  it("a re-sent added keeps status, cuts and preview", () => {
+    let s = tray([added(0, { title: "?", duration: null })]);
+    s = reduce(s, { kind: "cut", key: "0", removed: [{ start: 1, end: 2 }] });
+    s = run([{ kind: "progress", id: 0, done: 1, total: 4 }], s);
+    s = tray([added(0, { input: null, title: "Full", duration: 100 })], s);
+    expect(s.rows["0"]).toMatchObject({
+      title: "Full",
+      duration: 100,
+      status: "ready",
+      input: "https://youtu.be/x",
+      removed: [{ start: 1, end: 2 }],
+      preview: { phase: "loading", done: 1, total: 4 },
+    });
+  });
+
+  it("cut stores removed ranges", () => {
+    const s = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 10, end: 20 }] });
+    expect(s.rows["0"].removed).toEqual([{ start: 10, end: 20 }]);
+  });
+
+  it("progress on a ready row fills preview, status stays ready", () => {
+    const s = run([{ kind: "progress", id: 0, done: 50, total: 200 }, { kind: "fallback", id: 0, reason: null }], one());
+    expect(s.rows["0"].status).toBe("ready");
+    expect(s.rows["0"].preview).toMatchObject({ phase: "loading", done: 50, total: 200 });
+  });
+
+  it("previewFailed keeps the row ready with the message", () => {
+    const s = reduce(one(), { kind: "preview", key: "0", phase: "failed", message: "boom" });
+    expect(s.rows["0"].status).toBe("ready");
+    expect(s.rows["0"].preview).toMatchObject({ phase: "failed", message: "boom" });
+    const t = reduce(s, { kind: "preview", key: "0", phase: "ready" });
+    expect(t.rows["0"].preview).toMatchObject({ phase: "ready" });
+    expect(t.rows["0"].preview?.message).toBeUndefined();
+  });
+
+  it("saving then done ends done with the path", () => {
+    let s = reduce(one(), { kind: "saving", keys: ["0"] });
+    expect(s.rows["0"]).toMatchObject({ status: "downloading", done: 0, total: 0 });
+    expect(ready(s)).toEqual([]);
+    s = run(
+      [
+        { kind: "progress", id: 0, done: 5, total: 10 },
+        { kind: "converting", id: 0 },
+        { kind: "done", id: 0, path: "/m/Song.mp3", bytes: 9, secs: 1 },
+      ],
+      s,
+    );
+    expect(s.rows["0"]).toMatchObject({ status: "done", path: "/m/Song.mp3" });
+  });
+
+  it("added without duration renders as unknown", () => {
+    const s = tray([added(0, { duration: null })]);
+    expect(s.rows["0"].duration).toBeUndefined();
+    expect(formatTime(s.rows["0"].duration ?? NaN)).toBe("–:––");
+  });
+
+  it("ready rows are not active, and can be removed", () => {
+    let s = one();
+    expect(summary(s).active).toBe(0);
+    s = reduce(s, { kind: "remove", key: "0" });
+    expect(s.order).toEqual([]);
+  });
+
+  it("cancelled leaves a ready row ready", () => {
+    const s = run([{ kind: "cancelled", id: 0 }], one());
+    expect(s.rows["0"].status).toBe("ready");
   });
 });

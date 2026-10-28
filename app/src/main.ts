@@ -157,10 +157,10 @@ function renderRow(row: Row, index?: number): HTMLElement {
 
   const top = !row.parent;
   const buttons: HTMLButtonElement[] = [];
-  if (!isFinished(row.status) && top) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(row.gen, row.id)));
+  if (!isFinished(row.status) && top) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(row.id)));
   if (row.path && !android) buttons.push(iconButton("folder", t("reveal"), () => api.reveal(row.path!)));
   if ((row.status === "failed" || row.status === "cancelled") && top) buttons.push(iconButton("retry", t("retry"), () => retry(row.key)));
-  if (isFinished(row.status) && top) buttons.push(iconButton("remove", t("remove"), () => dispatch({ kind: "remove", key: row.key })));
+  if (isFinished(row.status) && top) buttons.push(iconButton("remove", t("remove"), () => removeTop(row.key)));
   setActions(el, buttons);
   return el;
 }
@@ -179,9 +179,9 @@ function renderGroup(group: Group, index: number): HTMLElement {
   setText(el, ".hint", "");
 
   const buttons: HTMLButtonElement[] = [];
-  if (!finished) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(group.gen, group.id)));
+  if (!finished) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(group.id)));
   if (finished && (stats.failed || group.cancelled)) buttons.push(iconButton("retry", t("retry"), () => retry(group.key)));
-  if (finished) buttons.push(iconButton("remove", t("remove"), () => dispatch({ kind: "remove", key: group.key })));
+  if (finished) buttons.push(iconButton("remove", t("remove"), () => removeTop(group.key)));
   setActions(el, buttons);
 
   let children = el.querySelector<HTMLElement>(".children");
@@ -203,7 +203,7 @@ function renderGroup(group: Group, index: number): HTMLElement {
 async function enqueue(inputs: string[]): Promise<boolean> {
   if (!inputs.length) return false;
   try {
-    await api.enqueue(inputs);
+    await api.add(inputs);
     return true;
   } catch (e) {
     toast(String(e) === "ytdlp-missing" ? t("ytdlpMissing") : String(e));
@@ -211,10 +211,17 @@ async function enqueue(inputs: string[]): Promise<boolean> {
   }
 }
 
+/** Removes a row or group and drops its tray entry and cache in the backend. */
+function removeTop(key: string) {
+  const id = state.groups[key]?.id ?? state.rows[key]?.id;
+  dispatch({ kind: "remove", key });
+  if (id !== undefined) void api.discard([id]).catch(() => {});
+}
+
 function retry(key: string) {
   const input = state.groups[key]?.input ?? state.rows[key]?.input;
   if (!input) return;
-  dispatch({ kind: "remove", key });
+  removeTop(key);
   void enqueue([input]);
 }
 
@@ -352,11 +359,12 @@ async function main() {
   applyLanguage();
   showFormat();
 
-  await api.onEngine(({ gen, event }) => {
-    dispatch({ kind: "engine", gen, event });
+  await api.onTray((event) => dispatch({ kind: "tray", event }));
+  await api.onEngine(({ event }) => {
+    dispatch({ kind: "engine", event });
     // One automatic retry for a link that failed on a network hiccup.
     if (event.kind === "failed" && event.network && event.parent === null) {
-      const key = `${gen}:${event.id}`;
+      const key = String(event.id);
       const input = state.rows[key]?.input;
       if (input && !autoRetried.has(input)) {
         autoRetried.add(input);
