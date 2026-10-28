@@ -33,6 +33,14 @@ describe("i18n", () => {
     expect(t("saveAll", { n: 4 })).toBe("● Tải 4 bài");
   });
 
+  it("credits SponsorBlock on its suggestions", () => {
+    setLanguage("en");
+    expect(t("trim.suggest", { n: 1, list: "0:00–0:28 (intro)" })).toBe("Found 1 non-music part: 0:00–0:28 (intro) · SponsorBlock");
+    expect(t("trim.suggest", { n: 2, list: "…" })).toBe("Found 2 non-music parts: … · SponsorBlock");
+    setLanguage("vi");
+    expect(t("trim.suggest", { n: 2, list: "…" })).toBe("Tìm thấy 2 đoạn không phải nhạc: … · SponsorBlock");
+  });
+
   it("follows the system unless the user chose", () => {
     expect(pickLanguage(null, ["vi-VN", "en-US"])).toBe("vi");
     expect(pickLanguage(null, ["en-US", "vi"])).toBe("vi");

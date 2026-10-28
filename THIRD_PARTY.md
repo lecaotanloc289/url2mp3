@@ -19,7 +19,8 @@ The app's trim screen suggests parts to remove from YouTube videos using
 [SponsorBlock](https://sponsor.ajay.app) data (queried live from `sponsor.ajay.app`, never
 bundled), licensed
 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) by Ajay Ramachandran and
-contributors. Only the first 4 characters of the SHA-256 of the video id are sent.
+contributors. Only the first 4 characters of the SHA-256 of the video id are sent. The
+suggestion shown in the app credits SponsorBlock by name.
 
 The Android APK links youtubedl-android (GPL v3), so the APK as a whole is distributed under
 GPL v3; its complete source is this repository (url2mp3's own code stays MIT, which GPL v3
