@@ -2,8 +2,8 @@
 // Rows and playlist groups are keyed by `String(id)`; the backend never reuses an id.
 // A link first becomes a `ready` row (the tray); only an explicit Download turns it into a save.
 
-import type { EngineEvent, TrayEvent } from "./api";
-import type { Range } from "./cut";
+import type { EngineEvent, SaveItem, TrayEvent } from "./api";
+import { kept, normalize, type Range } from "./cut";
 
 export type Status =
   | "probing"
@@ -38,6 +38,8 @@ export interface Row {
   youtube?: boolean;
   /** Ranges the user cut out; empty means keep everything. */
   removed: Range[];
+  /** Set once the row was saved from the tray: Retry then saves it again instead of re-adding. */
+  saved?: boolean;
   /** Progress of the trim preview (fetch + encode) while the row is ready. */
   preview?: { phase: "loading" | "ready" | "failed"; done: number; total: number; message?: string };
 }
@@ -62,7 +64,7 @@ export interface QueueState {
 export type Msg =
   | { kind: "engine"; event: EngineEvent }
   | { kind: "tray"; event: TrayEvent }
-  | { kind: "cut"; key: string; removed: Range[] }
+  | { kind: "cut"; key: string; removed: Range[]; duration?: number }
   | { kind: "preview"; key: string; phase: "loading" | "ready" | "failed"; message?: string }
   | { kind: "saving"; keys: string[] }
   | { kind: "remove"; key: string }
@@ -84,6 +86,17 @@ export function ready(state: QueueState): string[] {
     }
   }
   return keys;
+}
+
+/**
+ * The `save` item for a row. Cuts need the duration to turn removed ranges into kept ones: the
+ * trim dialog always stores the duration it learned from the audio on the row (`cut` Msg), so a
+ * row without one has never been trimmed and is saved whole.
+ */
+export function saveItem(row: Row, label: string): SaveItem {
+  const duration = row.duration;
+  if (duration === undefined || normalize(row.removed, duration).length === 0) return { id: row.id, cut: null };
+  return { id: row.id, cut: { keep: kept(row.removed, duration), label } };
 }
 
 export function percent(row: Row): number {
@@ -116,7 +129,7 @@ export function reduce(state: QueueState, msg: Msg): QueueState {
     case "tray":
       return onTray(state, msg.event);
     case "cut":
-      return update(state, msg.key, (r) => ({ ...r, removed: msg.removed }));
+      return update(state, msg.key, (r) => ({ ...r, removed: msg.removed, duration: msg.duration ?? r.duration }));
     case "preview":
       return update(state, msg.key, (r) => ({
         ...r,
@@ -126,7 +139,8 @@ export function reduce(state: QueueState, msg: Msg): QueueState {
       let next = state;
       for (const key of msg.keys) {
         next = update(next, key, (r) =>
-          r.status === "ready" ? { ...r, status: "downloading", done: 0, total: 0, message: undefined } : r,
+          r.status === "ready" || (r.saved && (r.status === "failed" || r.status === "cancelled"))
+            ? { ...r, status: "downloading", done: 0, total: 0, message: undefined, saved: true } : r,
         );
       }
       return next;

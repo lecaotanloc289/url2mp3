@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent, TrayEvent } from "./api";
 import { formatTime } from "./cut";
-import { empty, groupStats, percent, ready, reduce, summary, type QueueState } from "./state";
+import { empty, groupStats, percent, ready, reduce, saveItem, summary, type QueueState } from "./state";
 
 const run = (events: EngineEvent[], state: QueueState = empty()) =>
   events.reduce((s, event) => reduce(s, { kind: "engine", event }), state);
@@ -236,5 +236,26 @@ describe("tray", () => {
   it("cancelled leaves a ready row ready", () => {
     const s = run([{ kind: "cancelled", id: 0 }], one());
     expect(s.rows["0"].status).toBe("ready");
+  });
+
+  it("saving marks rows saved, and a failed saved row keeps its cuts and can be saved again", () => {
+    let s = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 10, end: 20 }] });
+    s = reduce(s, { kind: "saving", keys: ["0"] });
+    expect(s.rows["0"].saved).toBe(true);
+    s = run([{ kind: "failed", id: 0, parent: null, label: "x", message: "net", network: true }], s);
+    expect(s.rows["0"]).toMatchObject({ status: "failed", removed: [{ start: 10, end: 20 }], saved: true });
+    s = reduce(s, { kind: "saving", keys: ["0"] });
+    expect(s.rows["0"]).toMatchObject({ status: "downloading", removed: [{ start: 10, end: 20 }] });
+  });
+
+  it("saveItem: no cuts is whole, cuts become kept ranges, cuts without duration are whole", () => {
+    const row = one().rows["0"];
+    expect(saveItem(row, "trimmed")).toEqual({ id: 0, cut: null });
+    const cut = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 10, end: 20 }], duration: 272 }).rows["0"];
+    expect(saveItem(cut, "trimmed")).toEqual({
+      id: 0,
+      cut: { keep: [{ start: 0, end: 10 }, { start: 20, end: 272 }], label: "trimmed" },
+    });
+    expect(saveItem({ ...cut, duration: undefined }, "trimmed").cut).toBeNull();
   });
 });

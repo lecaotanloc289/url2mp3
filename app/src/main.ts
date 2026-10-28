@@ -8,7 +8,7 @@ import { open as pickFolder } from "@tauri-apps/plugin-dialog";
 import { api, type Format, type Language, type Settings, type ToolsStatus } from "./api";
 import { hint, language, pickLanguage, setLanguage, t } from "./i18n";
 import { sharedInput } from "./share";
-import { empty, groupStats, isFinished, percent, reduce, summary, type Group, type Msg, type Row } from "./state";
+import { empty, groupStats, isFinished, percent, reduce, saveItem, summary, type Group, type Msg, type Row } from "./state";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -218,7 +218,20 @@ function removeTop(key: string) {
   if (id !== undefined) void api.discard([id]).catch(() => {});
 }
 
+/** Saves rows again from the tray's cache, keeping their cuts. */
+function resave(rows: Row[]) {
+  dispatch({ kind: "saving", keys: rows.map((r) => r.key) });
+  api.save(rows.map((r) => saveItem(r, t("trimmedSuffix")))).catch((e) => toast(String(e)));
+}
+
 function retry(key: string) {
+  const group = state.groups[key];
+  const rows = group ? group.children.map((k) => state.rows[k]) : [state.rows[key]];
+  const again = rows.filter((r) => r?.saved && (r.status === "failed" || r.status === "cancelled"));
+  if (again.length) {
+    resave(again);
+    return;
+  }
   const input = state.groups[key]?.input ?? state.rows[key]?.input;
   if (!input) return;
   removeTop(key);
