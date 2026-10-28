@@ -10,17 +10,20 @@ use std::{
 
 use url2mp3_core::{Cut, Engine, Event, Format, Options, Outcome, Range, Resolved, Skip, Tools};
 
-/// `-J` prints a track (or a playlist for links containing "playlist"); otherwise writes
+/// `-J` prints a track (or a playlist for links containing "playlist"), its `acodec` the one
+/// the `-f` selector picks (AAC for M4A's, Opus for Opus's, MP3 otherwise); otherwise writes
 /// "audio" to the `-o` path (with `FAKE_SLEEP`: a partial "aud", then the full file after that
 /// many seconds). Links containing "bad" fail like a private video.
 const FAKE_YTDLP: &str = r#"#!/bin/sh
 [ -n "$FAKE_LOG" ] && echo "$@" >> "$FAKE_LOG"
-json=0; out=""; prev=""
+json=0; out=""; sel=""; prev=""
 for a in "$@"; do
   case "$a" in --version) echo 2099.01.01; exit 0;; -J) json=1;; esac
   [ "$prev" = "-o" ] && out="$a"
+  [ "$prev" = "-f" ] && sel="$a"
   prev="$a"
 done
+case "$sel" in *ext=m4a*) acodec=mp4a.40.2;; *acodec=opus*) acodec=opus;; *) acodec=mp3;; esac
 case "$prev" in
   *bad*) echo "ERROR: Video unavailable" >&2; exit 1;;
   *playlist*) echo '{"_type":"playlist","title":"Mix","entries":[{"_type":"url","url":"https://example.com/v/abc","title":"Fake Song"}]}'; exit 0;;
@@ -28,7 +31,7 @@ esac
 if [ "$json" = 1 ]; then
   # Links containing "other" are another video with the same title.
   case "$prev" in *other*) id=xyz;; *) id=abc;; esac
-  echo "{\"id\":\"$id\",\"title\":\"Fake Song\",\"uploader\":\"Tester\",\"webpage_url\":\"https://example.com/v/$id\",\"acodec\":\"mp3\",\"duration\":272,\"extractor_key\":\"Youtube\"}"
+  echo "{\"id\":\"$id\",\"title\":\"Fake Song\",\"uploader\":\"Tester\",\"webpage_url\":\"https://example.com/v/$id\",\"acodec\":\"$acodec\",\"duration\":272,\"extractor_key\":\"Youtube\"}"
 else
   if [ -n "$FAKE_SLEEP" ]; then printf 'aud' > "$out"; sleep "$FAKE_SLEEP"; fi
   printf 'audio' > "$out"
@@ -36,9 +39,10 @@ fi
 "#;
 
 /// Copies the first `-i` input to the last argument. With `FAIL_ONCE=<file>` the first call
-/// fails and creates that file.
+/// fails and creates that file; with `FFMPEG_LOG=<file>` each call's arguments go there.
 const FAKE_FFMPEG: &str = r#"#!/bin/sh
 [ "$1" = "-version" ] && exit 0
+[ -n "$FFMPEG_LOG" ] && echo "$@" >> "$FFMPEG_LOG"
 if [ -n "$FAIL_ONCE" ] && [ ! -e "$FAIL_ONCE" ]; then touch "$FAIL_ONCE"; echo "boom" >&2; exit 1; fi
 in=""; prev=""; last=""
 for a in "$@"; do
@@ -504,6 +508,61 @@ async fn cached_audio_is_saved_by_an_engine_with_another_format_without_fetching
     assert_eq!(fs::read(out.path().join("Fake Song.m4a")).unwrap(), b"cached");
     assert_eq!(kinds(&events), ["track", "converting", "done"]);
     assert!(!log.exists(), "yt-dlp ran: {:?}", fs::read_to_string(&log));
+}
+
+/// Without cached audio, a tray track read for MP3 (stream picked by `bestaudio/best`) is read
+/// again by an M4A engine, so the AAC stream is downloaded and copied, not re-encoded.
+#[tokio::test]
+async fn uncached_track_read_for_another_format_is_read_again_before_saving() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (first, _) = engine(fakes(bin.path()), out.path()).await;
+    let track = resolve_track(&first, LINK).await;
+    assert_eq!(track.codec(), "mp3");
+
+    let (ytdlp_log, ffmpeg_log) = (bin.path().join("ytdlp.log"), bin.path().join("ffmpeg.log"));
+    let mut tools = fakes(bin.path());
+    tools.env.push(("FAKE_LOG".into(), ytdlp_log.clone().into()));
+    tools.env.push(("FFMPEG_LOG".into(), ffmpeg_log.clone().into()));
+    let opts = Options {
+        format: Format::M4a,
+        ..options(out.path())
+    };
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sink = {
+        let events = events.clone();
+        move |e: Event| events.lock().unwrap().push(e)
+    };
+    let second = Engine::start(tools, opts, sink).await.unwrap();
+
+    let outcome = second.save(0, None, &track, None, None, None).await;
+
+    assert_eq!(outcome, Outcome::Done(5));
+    assert_eq!(
+        kinds(&events),
+        ["probing", "track", "fallback", "converting", "done"]
+    );
+    let ytdlp = fs::read_to_string(&ytdlp_log).unwrap();
+    let lines: Vec<&str> = ytdlp.lines().collect();
+    assert_eq!(lines.len(), 2, "probe + download: {ytdlp}");
+    assert!(
+        lines[0].contains("-f bestaudio[ext=m4a]/bestaudio/best") && lines[0].contains("-J"),
+        "{ytdlp}"
+    );
+    assert!(lines[0].ends_with("-- https://example.com/v/abc"), "{ytdlp}");
+    let ffmpeg = fs::read_to_string(&ffmpeg_log).unwrap();
+    assert!(ffmpeg.contains("-c:a copy"), "AAC copied: {ffmpeg}");
+
+    // An engine of the track's own format downloads it as it is.
+    let (third_out, log) = (tempfile::tempdir().unwrap(), bin.path().join("same.log"));
+    let mut tools = fakes(bin.path());
+    tools.env.push(("FAKE_LOG".into(), log.clone().into()));
+    let (same, _) = engine(tools, third_out.path()).await;
+    assert_eq!(
+        same.save(1, None, &track, None, None, None).await,
+        Outcome::Done(5)
+    );
+    let log = fs::read_to_string(&log).unwrap();
+    assert!(!log.contains("-J"), "no second probe: {log}");
 }
 
 #[tokio::test]

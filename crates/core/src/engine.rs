@@ -143,10 +143,14 @@ pub struct Track {
     /// A YouTube video (the only kind SponsorBlock knows).
     pub youtube: bool,
     info: Arc<Info>,
+    /// The yt-dlp format selector `info` was read with: its stream is the one picked for that
+    /// engine's format. An engine of another format reads the track again before downloading
+    /// it (see `save`).
+    selector: &'static str,
 }
 
 impl Track {
-    fn new(info: Info) -> Self {
+    fn new(info: Info, selector: &'static str) -> Self {
         // A flat entry goes by its page until probed, as its `Probing` label always did.
         let title = if info.is_reference() {
             info.title
@@ -165,6 +169,7 @@ impl Track {
             video_id: info.id.clone(),
             youtube: info.extractor_key.as_deref() == Some("Youtube"),
             info: Arc::new(info),
+            selector,
         }
     }
 
@@ -182,7 +187,7 @@ impl Track {
     #[cfg(any(test, feature = "test-util"))]
     pub fn for_tests(title: &str) -> Self {
         let info = serde_json::from_value(serde_json::json!({ "title": title })).expect("Info from a title");
-        Self::new(info)
+        Self::new(info, Format::Mp3.selector())
     }
 }
 
@@ -314,13 +319,13 @@ impl Engine {
         };
         let info = self.ytdlp.probe(&target, !search).await?;
         if !info.is_playlist() {
-            return Ok(Resolved::Track(Track::new(info)));
+            return Ok(Resolved::Track(self.track(info)));
         }
         let mut entries = info.entries.into_iter().flatten().flatten();
         if search {
             // ytsearch1 is a one-entry playlist: the hit stands for the search.
             let hit = entries.next().ok_or_else(|| anyhow!("không tìm thấy bài nào"))?;
-            return Ok(Resolved::Track(Track::new(hit)));
+            return Ok(Resolved::Track(self.track(hit)));
         }
         // Leave the tracks inside at least ~100 characters of path.
         let title = fit(
@@ -330,8 +335,13 @@ impl Engine {
         );
         Ok(Resolved::Playlist {
             title,
-            tracks: entries.map(Track::new).collect(),
+            tracks: entries.map(|e| self.track(e)).collect(),
         })
+    }
+
+    /// What yt-dlp read with this engine's format selector.
+    fn track(&self, info: Info) -> Track {
+        Track::new(info, self.opts.format.selector())
     }
 
     /// Reads a flat playlist entry in full; any other track comes back as it is. Emits nothing
@@ -349,11 +359,34 @@ impl Engine {
         if info.is_playlist() {
             bail!("playlist lồng nhau, hãy dán trực tiếp link playlist con");
         }
-        Ok(Track::new(info))
+        Ok(self.track(info))
     }
 
-    /// Downloads the track's audio stream (the one picked for the format in effect when the
-    /// engine started) to `to`, emitting `Progress` or `Fallback` under `id`. The file only
+    /// Reads `track` again from its page with this engine's format selector, so it carries the
+    /// stream this engine's format picks; a flat entry is probed as by `probe_track`. Emits
+    /// nothing and takes no job permit.
+    pub async fn reprobe(&self, track: &Track) -> Result<Track> {
+        if track.needs_probe() {
+            return self.probe_track(track).await;
+        }
+        let page = track
+            .info
+            .webpage_url
+            .as_deref()
+            .context("không có link gốc để đọc lại")?;
+        let info = self.ytdlp.probe(page, true).await?;
+        ensure!(!info.is_playlist(), "link gốc của bài là một playlist");
+        Ok(self.track(info))
+    }
+
+    /// `track` was read by an engine of another format: its stream is that format's pick, so
+    /// `reprobe` it before downloading (`save` does that itself).
+    pub fn picked_for_another_format(&self, track: &Track) -> bool {
+        !track.needs_probe() && track.selector != self.opts.format.selector()
+    }
+
+    /// Downloads the track's audio stream (the one picked for the format of the engine that
+    /// read the track) to `to`, emitting `Progress` or `Fallback` under `id`. The file only
     /// appears at `to` once complete: it is written to `<to>.part`, which is removed if the
     /// download fails or the future is dropped (its yt-dlp is killed with it).
     pub async fn fetch(&self, id: Id, track: &Track, to: &Path) -> Result<()> {
@@ -381,7 +414,8 @@ impl Engine {
 
     /// Encodes `track` into the output folder (inside the `playlist` folder if given) with the
     /// engine's settings, emitting `Track` … `Done`/`Skipped`/`Failed` under `id`. Takes a job
-    /// permit, and probes a flat entry first.
+    /// permit, and probes a flat entry first (or, without `audio`, a track read by an engine of
+    /// another format: see `reprobe`).
     ///
     /// `audio`: the stream already fetched by `fetch`; it is read, never moved or deleted, and
     /// nothing is downloaded for it. Without it the audio is fetched into the engine's temp dir.
@@ -414,15 +448,20 @@ impl Engine {
         cut: Option<&Cut>,
     ) -> Outcome {
         let probed;
-        let track = if track.needs_probe() {
-            if track.info.url.is_some() {
+        // A flat entry is read in full; a track read for another format (the app's tray keeps
+        // tracks across settings) is read again when it is about to be downloaded, so the
+        // stream is this format's pick (e.g. AAC for M4A, copied rather than re-encoded).
+        // Cached audio is encoded as it is: it is never downloaded again.
+        let stale = audio.is_none() && self.picked_for_another_format(track);
+        let track = if track.needs_probe() || stale {
+            if track.info.url.is_some() || stale {
                 self.emit(Event::Probing {
                     id,
                     parent,
                     label: track.title.clone(),
                 });
             }
-            match self.probe_track(track).await {
+            match self.reprobe(track).await {
                 Ok(t) => {
                     probed = t;
                     &probed

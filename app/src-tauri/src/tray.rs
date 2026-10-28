@@ -12,6 +12,8 @@ use url2mp3_core::{Id, Track};
 
 #[derive(Clone)]
 pub struct Entry {
+    /// As yt-dlp read it, for the format of that moment (the track remembers which): fetched
+    /// or saved without cached audio after a format change, it is read again first.
     pub track: Track,
     /// The playlist row this track belongs to.
     pub parent: Option<Id>,

@@ -185,7 +185,8 @@ impl Jobs {
     }
 
     /// Save, and build the next engine from the new settings. Rows in the tray keep their
-    /// cached audio: the next save encodes it with these settings.
+    /// cached audio: the next save encodes it with these settings. A row without cached audio
+    /// is read again for the new format when it is fetched or saved.
     pub async fn set_settings(&self, new: Settings) -> Result<()> {
         settings::save(&self.settings_path, &new)?;
         *self.settings.lock().expect("settings lock") = new;
@@ -326,8 +327,15 @@ impl Jobs {
     async fn prepare_now(&self, engine: &Engine, id: Id, entry: Entry) -> Result<Prepared> {
         // A second prepare or a save of this row waits here rather than fetching again.
         let _cache = entry.cache.lock().await;
-        let track = if entry.track.needs_probe() {
-            let probed = engine.probe_track(&entry.track).await?;
+        let (dir, (audio, preview)) = {
+            let state = self.state();
+            (state.tray.dir(id), state.tray.paths(id))
+        };
+        // Read again when the format changed since `add`, so the cache holds this format's
+        // stream (audio already cached stays as it is).
+        let stale = engine.picked_for_another_format(&entry.track) && !exists(&audio).await;
+        let track = if entry.track.needs_probe() || stale {
+            let probed = engine.reprobe(&entry.track).await?;
             let mut state = self.state();
             if state.tray.set_track(id, probed.clone()) {
                 self.emit_tray(TrayEvent::added(id, entry.parent, None, &probed));
@@ -335,10 +343,6 @@ impl Jobs {
             probed
         } else {
             entry.track
-        };
-        let (dir, (audio, preview)) = {
-            let state = self.state();
-            (state.tray.dir(id), state.tray.paths(id))
         };
         if !exists(&audio).await {
             tokio::fs::create_dir_all(&dir).await?;
