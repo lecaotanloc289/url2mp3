@@ -99,6 +99,7 @@ From a clone: `cargo install --path crates/cli`
 url2mp3 https://www.youtube.com/watch?v=Llw9Q6akRo4      # one track → ~/Downloads
 url2mp3 "never gonna give you up"                        # search YouTube, take the first hit
 url2mp3 https://www.tiktok.com/@user/video/123 link2 …   # several links at once
+url2mp3 https://www.tiktok.com/@user/photo/123           # TikTok photo post: its music
 url2mp3 'https://www.youtube.com/playlist?list=…' -n 20  # first 20 tracks of a playlist
 url2mp3 -a links.txt                                     # one link per line
 url2mp3                                                  # paste links, empty line to start

@@ -91,6 +91,7 @@ chạy dòng `cargo install` như trên.
 url2mp3 https://www.youtube.com/watch?v=Llw9Q6akRo4      # một bài → ~/Downloads
 url2mp3 "lạc trôi sơn tùng"                              # tìm trên YouTube, tải kết quả đầu
 url2mp3 https://www.tiktok.com/@user/video/123 link2 …   # nhiều link cùng lúc
+url2mp3 https://www.tiktok.com/@user/photo/123           # bài ảnh TikTok: lấy nhạc nền
 url2mp3 'https://www.youtube.com/playlist?list=…' -n 20  # 20 bài đầu của playlist
 url2mp3 -a danh-sach.txt                                 # mỗi dòng một link
 url2mp3                                                  # dán link vào, Enter dòng trống để tải

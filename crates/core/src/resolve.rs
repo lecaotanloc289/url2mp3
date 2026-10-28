@@ -147,6 +147,19 @@ impl Ytdlp {
 
     /// One JSON document for a video, a playlist (entries flat when `flat`), or a search.
     pub async fn probe(&self, target: &str, flat: bool) -> Result<Info> {
+        let target = tiktok_photo_as_video(target).unwrap_or_else(|| target.to_owned());
+        match self.probe_once(&target, flat).await {
+            // A short link (vt.tiktok.com) shows it is a photo post only once yt-dlp follows it.
+            // If the /video/ form fails too, report the error about the link the user gave.
+            Err(e) => match unsupported_tiktok_photo(&e.to_string()) {
+                Some(video) => self.probe_once(&video, flat).await.map_err(|_| e),
+                None => Err(e),
+            },
+            ok => ok,
+        }
+    }
+
+    async fn probe_once(&self, target: &str, flat: bool) -> Result<Info> {
         let mut cmd = self.command();
         cmd.arg("-J");
         if flat {
@@ -205,6 +218,31 @@ fn error_line(stderr: &[u8]) -> String {
     line.trim_start_matches("ERROR:").trim().to_owned()
 }
 
+/// yt-dlp has no extractor for TikTok photo posts (`/@user/photo/<id>`), but the same id under
+/// `/video/` resolves to the post's music as an audio-only format.
+fn tiktok_photo_as_video(link: &str) -> Option<String> {
+    let mut url = reqwest::Url::parse(link).ok()?;
+    let host = url.host_str()?;
+    if host != "tiktok.com" && !host.ends_with(".tiktok.com") {
+        return None;
+    }
+    let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
+    let [user, "photo", id] = segments[..] else {
+        return None;
+    };
+    if !user.starts_with('@') {
+        return None;
+    }
+    let path = format!("/{user}/video/{id}");
+    url.set_path(&path);
+    Some(url.into())
+}
+
+/// The `/video/` form of the photo post yt-dlp refused, from its `Unsupported URL: <url>` error.
+fn unsupported_tiktok_photo(error: &str) -> Option<String> {
+    tiktok_photo_as_video(error.strip_prefix("Unsupported URL:")?.trim())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +267,42 @@ mod tests {
         let entries = info.entries.unwrap();
         assert!(entries[0].as_ref().unwrap().is_reference());
         assert!(entries[1].is_none());
+    }
+
+    #[test]
+    fn tiktok_photo_posts_become_video_links() {
+        assert_eq!(
+            tiktok_photo_as_video("https://www.tiktok.com/@lyricx369/photo/7697286291569790216?_r=1")
+                .as_deref(),
+            Some("https://www.tiktok.com/@lyricx369/video/7697286291569790216?_r=1")
+        );
+        assert_eq!(
+            tiktok_photo_as_video("https://tiktok.com/@a/photo/1").as_deref(),
+            Some("https://tiktok.com/@a/video/1")
+        );
+        assert_eq!(
+            tiktok_photo_as_video("https://m.tiktok.com/@a/photo/1/").as_deref(),
+            Some("https://m.tiktok.com/@a/video/1")
+        );
+        for other in [
+            "https://www.tiktok.com/@a/video/1",
+            "https://www.tiktok.com/tag/photo/1",
+            "https://vt.tiktok.com/ZSgphjbt8/",
+            "https://example.com/@a/photo/1",
+            "https://nottiktok.com/@a/photo/1",
+            "lofi chill",
+        ] {
+            assert_eq!(tiktok_photo_as_video(other), None, "{other}");
+        }
+        assert_eq!(
+            unsupported_tiktok_photo("Unsupported URL: https://www.tiktok.com/@a/photo/1?x=y").as_deref(),
+            Some("https://www.tiktok.com/@a/video/1?x=y")
+        );
+        assert_eq!(
+            unsupported_tiktok_photo("Unsupported URL: https://example.com/a"),
+            None
+        );
+        assert_eq!(unsupported_tiktok_photo("Video unavailable"), None);
     }
 
     #[test]
