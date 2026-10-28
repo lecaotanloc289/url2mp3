@@ -105,12 +105,14 @@ export function ready(state: QueueState): string[] {
 /**
  * The `save` item for a row. Cuts need the duration to turn removed ranges into kept ones: the
  * trim dialog always stores the duration it learned from the audio on the row (`cut` Msg), so a
- * row without one has never been trimmed and is saved whole.
+ * row without one has never been trimmed and is saved whole. A kept part reaching the end is
+ * sent open-ended (`end: null`), so no tail is lost to a duration a little short of the audio.
  */
 export function saveItem(row: Row, label: string): SaveItem {
   const duration = row.duration;
   if (row.whole || duration === undefined || normalize(row.removed, duration).length === 0) return { id: row.id, cut: null };
-  return { id: row.id, cut: { keep: kept(row.removed, duration), label } };
+  const keep = kept(row.removed, duration).map((r) => (r.end >= duration ? { start: r.start, end: null } : r));
+  return { id: row.id, cut: { keep, label } };
 }
 
 /** The trim dialog opens on a tray row, and again on a saved one (its cache stays until removed). */

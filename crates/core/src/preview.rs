@@ -96,9 +96,19 @@ impl PeakReducer {
     }
 }
 
-/// Waveform of `input`: `buckets` values in `0.0..=1.0`. ffmpeg decodes to PCM on a pipe that is
-/// folded as it arrives, so an hour-long mix costs a few dozen KB of memory.
-pub async fn peaks(tools: &Tools, input: &Path, buckets: usize) -> Result<Vec<f32>> {
+/// What `peaks` read from a track.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Waveform {
+    /// `buckets` values in `0.0..=1.0`.
+    pub peaks: Vec<f32>,
+    /// The audio's real length in seconds, from the samples decoded: yt-dlp's `duration` is
+    /// rounded to the second (often down), this one is what a cut can reach.
+    pub seconds: f64,
+}
+
+/// Waveform of `input`. ffmpeg decodes to PCM on a pipe that is folded as it arrives, so an
+/// hour-long mix costs a few dozen KB of memory.
+pub async fn peaks(tools: &Tools, input: &Path, buckets: usize) -> Result<Waveform> {
     let mut child = tools
         .ffmpeg_command()
         .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-i"])
@@ -123,6 +133,7 @@ pub async fn peaks(tools: &Tools, input: &Path, buckets: usize) -> Result<Vec<f3
     // `pending` holds at most one stray byte between reads (a sample split across chunks).
     let mut pending: Vec<u8> = Vec::with_capacity(buf.len() + 1);
     let mut samples: Vec<i16> = Vec::with_capacity(buf.len() / 2 + 1);
+    let mut decoded: u64 = 0;
     loop {
         let n = stdout.read(&mut buf).await.context("đọc PCM từ ffmpeg")?;
         if n == 0 {
@@ -133,6 +144,7 @@ pub async fn peaks(tools: &Tools, input: &Path, buckets: usize) -> Result<Vec<f3
         samples.clear();
         samples.extend(pairs.iter().map(|p| i16::from_le_bytes(*p)));
         reducer.push(&samples);
+        decoded += samples.len() as u64;
         let keep = rest.to_vec();
         pending = keep;
     }
@@ -140,7 +152,10 @@ pub async fn peaks(tools: &Tools, input: &Path, buckets: usize) -> Result<Vec<f3
     let status = child.wait().await.context("ffmpeg")?;
     let stderr = err_task.await.unwrap_or_default();
     crate::transcode::check_ffmpeg(status, &stderr)?;
-    Ok(reducer.finish())
+    Ok(Waveform {
+        peaks: reducer.finish(),
+        seconds: decoded as f64 / PEAK_RATE as f64,
+    })
 }
 
 /// AAC in MP4 for the `<audio>` element; an AAC source is only remuxed.

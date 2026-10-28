@@ -2,7 +2,6 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Range } from "./cut";
 
 export type Format = "mp3" | "m4a" | "opus";
 export type Language = "vi" | "en";
@@ -71,9 +70,15 @@ export interface Prepared {
   exists: boolean;
 }
 
+/** A kept part as sent to `save`. `end: null` runs to the end of the audio, whatever its exact length. */
+export interface KeepRange {
+  start: number;
+  end: number | null;
+}
+
 export interface SaveItem {
   id: number;
-  cut: { keep: Range[]; label: string } | null;
+  cut: { keep: KeepRange[]; label: string } | null;
 }
 
 export type ToolsStatus =

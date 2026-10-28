@@ -92,6 +92,51 @@ async fn trimmed_encode_keeps_only_the_kept_ranges() {
     assert!(!video.is_empty(), "no attached picture stream");
 }
 
+/// yt-dlp says 10 s for a 10.4 s track: the measured length and an open end keep the tail.
+#[tokio::test]
+async fn open_ended_cut_keeps_the_tail_past_the_rounded_duration() {
+    if !have("ffmpeg") || !have("ffprobe") {
+        eprintln!("ffmpeg/ffprobe not on PATH, skipping");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (src, out) = (dir.path().join("in.opus"), dir.path().join("out.mp3"));
+    ffmpeg(
+        &["-f", "lavfi", "-i", "sine=f=440:d=10.4", "-c:a", "libopus"],
+        &src,
+    );
+    let tools = Tools::from_path();
+
+    let measured = peaks(&tools, &src, PEAK_BUCKETS).await.unwrap().seconds;
+    assert!((measured - 10.4).abs() < 0.03, "measured {measured} s");
+
+    let keep = [Range {
+        start: 2.0,
+        end: f64::INFINITY,
+    }];
+    let job = Job {
+        input: &src,
+        cover: None,
+        output: &out,
+        format: Format::Mp3,
+        src_codec: "opus",
+        bitrate: None,
+        tags: Tags {
+            title: "t",
+            artist: None,
+            album: None,
+            comment: None,
+        },
+        keep: Some(&keep),
+    };
+    encode(&tools, job).await.unwrap();
+
+    let duration: f64 = probe(&out, &["-show_entries", "format=duration", "-of", "csv=p=0"])
+        .parse()
+        .unwrap();
+    assert!((duration - 8.4).abs() <= 0.06, "duration {duration}, not 8.0");
+}
+
 #[tokio::test]
 async fn preview_is_aac_and_peaks_have_1200_buckets() {
     if !have("ffmpeg") || !have("ffprobe") {
@@ -120,10 +165,11 @@ async fn preview_is_aac_and_peaks_have_1200_buckets() {
     );
     assert_eq!(codec, "aac");
 
-    let p = peaks(&tools, &src, PEAK_BUCKETS).await.unwrap();
-    assert_eq!(p.len(), 1200);
-    let max = p.iter().copied().fold(0.0, f32::max);
+    let wave = peaks(&tools, &src, PEAK_BUCKETS).await.unwrap();
+    assert_eq!(wave.peaks.len(), 1200);
+    let max = wave.peaks.iter().copied().fold(0.0, f32::max);
     assert!(max > 0.5 && max <= 1.0, "max {max}");
+    assert!((wave.seconds - 5.0).abs() < 0.03, "measured {} s", wave.seconds);
 
     assert!(peaks(&tools, &dir.path().join("missing.opus"), 10).await.is_err());
 }

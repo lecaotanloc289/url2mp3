@@ -144,8 +144,9 @@ kiện. Lệnh `url2mp3` (`crates/cli`) vẽ các sự kiện đó ra terminal; 
   vuông) và ghi tag. Nếu codec nguồn trùng codec đích (Opus→`.opus`, AAC→`.m4a`, MP3 TikTok→`.mp3`)
   thì chỉ copy luồng, không nén lại.
 - **Cắt** (app dùng; lệnh terminal luôn lưu nguyên bài): `cut.rs` chuẩn hoá các đoạn giữ lại và
-  dựng đồ thị ffmpeg nối chúng (mờ dần 15 ms ở các mép nối bên trong), `preview.rs` tạo bản nghe
-  thử AAC và các đỉnh sóng âm, `sponsor.rs` hỏi SponsorBlock để gợi ý. `Engine::fetch` tải âm
+  dựng đồ thị ffmpeg nối chúng (mờ dần 15 ms ở các mép nối bên trong; đoạn cuối chạm hết bài thì
+  để mở, không mất đuôi bài vì độ dài yt-dlp đã làm tròn), `preview.rs` tạo bản nghe thử AAC, các
+  đỉnh sóng âm và độ dài đo thật của âm thanh, `sponsor.rs` hỏi SponsorBlock để gợi ý. `Engine::fetch` tải âm
   thanh một lần; `Engine::save` nén từ đó.
 
 ## Chất lượng & tốc độ

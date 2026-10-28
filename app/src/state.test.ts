@@ -254,9 +254,13 @@ describe("tray", () => {
     const cut = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 10, end: 20 }], duration: 272 }).rows["0"];
     expect(saveItem(cut, "trimmed")).toEqual({
       id: 0,
-      cut: { keep: [{ start: 0, end: 10 }, { start: 20, end: 272 }], label: "trimmed" },
+      // The last part runs to the end of the audio, past a rounded duration.
+      cut: { keep: [{ start: 0, end: 10 }, { start: 20, end: null }], label: "trimmed" },
     });
     expect(saveItem({ ...cut, duration: undefined }, "trimmed").cut).toBeNull();
+    // Cutting the tail keeps a closed end.
+    const tail = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 260, end: 272.4 }], duration: 272.4 }).rows["0"];
+    expect(saveItem(tail, "trimmed").cut?.keep).toEqual([{ start: 0, end: 260 }]);
   });
 });
 

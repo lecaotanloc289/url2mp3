@@ -19,7 +19,10 @@ export interface TrimDeps {
 interface Session {
   row: Row;
   deps: TrimDeps;
-  /** Seconds: yt-dlp's until `prepare` answers, then `prepared.duration ?? audio.duration`. */
+  /**
+   * Seconds: yt-dlp's (rounded) until `prepare` answers, then `prepared.duration` (measured from
+   * the decoded audio) or else `audio.duration`.
+   */
   duration?: number;
   prepared?: Prepared;
   /** Normalized whenever the duration is known, except in the middle of an edge drag. */

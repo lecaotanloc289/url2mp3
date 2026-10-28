@@ -32,6 +32,7 @@ use crate::{
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Prepared {
+    /// The audio's measured length (yt-dlp's rounded one if nothing was decoded).
     duration: Option<f64>,
     peaks: Vec<f32>,
     /// SponsorBlock's non-music parts (YouTube only), never applied by themselves.
@@ -363,12 +364,14 @@ impl Jobs {
             }
         };
         let whole = engine.whole_destination(&track, entry.playlist.as_deref());
-        let (made, peaks, suggestions, exists) =
+        let (made, wave, suggestions, exists) =
             tokio::join!(make_preview, peaks, suggestions, exists(&whole));
         made?;
+        let wave = wave?;
         Ok(Prepared {
-            duration: track.duration,
-            peaks: peaks?,
+            // What was decoded, not yt-dlp's rounded figure: cuts must be able to reach the end.
+            duration: Some(wave.seconds).filter(|s| *s > 0.0).or(track.duration),
+            peaks: wave.peaks,
             suggestions,
             exists,
         })
@@ -616,11 +619,15 @@ mod tests {
         );
         let items: Vec<SaveItem> = from_value(json!([
             { "id": 1, "cut": null },
-            { "id": 2, "cut": { "keep": [{ "start": 0.0, "end": 9.5 }], "label": "trimmed" } },
+            { "id": 2, "cut": { "keep": [{ "start": 0.0, "end": 9.5 }, { "start": 12.0, "end": null }],
+                                "label": "trimmed" } },
         ]))
         .unwrap();
         assert!(items[0].cut.is_none());
         assert_eq!(items[1].id, 2);
-        assert_eq!(items[1].cut.as_ref().map(|c| c.keep.len()), Some(1));
+        let keep = &items[1].cut.as_ref().unwrap().keep;
+        assert_eq!(keep.len(), 2);
+        // `null`: to the end of the audio.
+        assert_eq!(keep[1].end, f64::INFINITY);
     }
 }

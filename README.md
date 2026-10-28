@@ -153,9 +153,10 @@ events. The `url2mp3` command (`crates/cli`) draws those events in the terminal;
   writes the tags. When the source codec already matches the target (Opus→`.opus`, AAC→`.m4a`,
   TikTok MP3→`.mp3`), the stream is copied without re-encoding.
 - **Trim** (used by the app; the CLI always saves whole tracks): `cut.rs` normalizes the kept
-  ranges and builds the ffmpeg graph that joins them (15 ms fades on inner edges only),
-  `preview.rs` makes the AAC preview copy and the waveform peaks, `sponsor.rs` asks SponsorBlock
-  for suggestions. `Engine::fetch` downloads the audio once; `Engine::save` encodes from it.
+  ranges and builds the ffmpeg graph that joins them (15 ms fades on inner edges only; a last
+  range that reaches the end is open-ended, so no tail is lost to yt-dlp's rounded duration),
+  `preview.rs` makes the AAC preview copy, the waveform peaks and the audio's measured length,
+  `sponsor.rs` asks SponsorBlock for suggestions. `Engine::fetch` downloads the audio once; `Engine::save` encodes from it.
 
 ## Quality and speed
 

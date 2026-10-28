@@ -88,9 +88,11 @@ async fn trim_pipeline_on_real_youtube() {
     println!("preview codec: {codec}");
     assert_eq!(codec, "aac");
 
-    let bars = peaks(engine.tools(), &audio, PEAK_BUCKETS).await.expect("peaks");
-    assert_eq!(bars.len(), 1200);
-    assert!(bars.iter().any(|p| *p > 0.0));
+    let wave = peaks(engine.tools(), &audio, PEAK_BUCKETS).await.expect("peaks");
+    assert_eq!(wave.peaks.len(), 1200);
+    assert!(wave.peaks.iter().any(|p| *p > 0.0));
+    println!("measured length: {} s (yt-dlp: {length} s)", wave.seconds);
+    assert!((wave.seconds - length).abs() < 1.5, "measured {}", wave.seconds);
 
     let client = url2mp3_core::http_client().build().unwrap();
     let found = suggestions(&client, track.video_id.as_deref().unwrap()).await;
