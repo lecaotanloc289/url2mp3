@@ -7,7 +7,7 @@ import { api, type Language, type Prepared, type SaveItem, type Segment } from "
 import { formatTime, History, kept, keptLength, normalize, nudge, type Range } from "./cut";
 import { category, t } from "./i18n";
 import { saveItem, type Msg, type Row } from "./state";
-import { bars, dragTo, findRange, hitEdge, playFrom, span, ticks, timeAt, xAt, type EdgeHit } from "./wave";
+import { bars, dragTo, findRange, hitEdge, interrupted, playFrom, span, ticks, timeAt, xAt, type EdgeHit } from "./wave";
 
 export interface TrimDeps {
   language: Language;
@@ -126,6 +126,15 @@ function finish() {
 async function load(s: Session) {
   const { key, id } = s.row;
   const { dispatch } = s.deps;
+  // Retry: drop the audio of the failed attempt; play stays off until the new one loads.
+  if (s.url) {
+    s.audio.pause();
+    s.audio.removeAttribute("src");
+    s.audio.load();
+    URL.revokeObjectURL(s.url);
+    s.url = undefined;
+  }
+  s.canPlay = false;
   s.phase = "loading";
   s.message = undefined;
   render();
@@ -265,7 +274,10 @@ function toggle(s: Session) {
     to = playFrom(0, removed, s.duration);
   }
   if (typeof to === "number") a.currentTime = to;
-  if (to !== "end") void a.play().catch((e) => fail(s, String(e)));
+  if (to === "end") return;
+  a.play().catch((e) => {
+    if (!interrupted(e)) fail(s, String(e));
+  });
 }
 
 /** Jump over a removed part under the playhead, or stop when only removed audio is left. */

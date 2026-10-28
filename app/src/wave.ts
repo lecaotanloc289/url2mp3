@@ -83,6 +83,14 @@ export function playFrom(t: number, removed: Range[], duration: number): number 
   return to >= duration - 0.05 ? "end" : to;
 }
 
+/**
+ * A rejected `play()` that only means it was interrupted (a pause, a seek, a new source), not
+ * that the audio can't play.
+ */
+export function interrupted(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { name?: unknown }).name === "AbortError";
+}
+
 /** One value per bar: the loudest peak in that bar's slice. */
 export function bars(peaks: number[], n: number): number[] {
   const out = new Array<number>(n).fill(0);

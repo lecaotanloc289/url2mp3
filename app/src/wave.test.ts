@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bars, dragTo, findRange, hitEdge, playFrom, span, ticks, timeAt, xAt } from "./wave";
+import { bars, dragTo, findRange, hitEdge, interrupted, playFrom, span, ticks, timeAt, xAt } from "./wave";
 
 describe("wave geometry", () => {
   it("maps pointer x to time and back, clamped to the track", () => {
@@ -47,6 +47,14 @@ describe("wave geometry", () => {
     expect(playFrom(0, removed, 272)).toBe(28);
     expect(playFrom(100, removed, 272)).toBeNull();
     expect(playFrom(250, removed, 272)).toBe("end");
+  });
+
+  it("tells an interrupted play() from one that failed", () => {
+    expect(interrupted(new DOMException("The play() request was interrupted by a call to pause()", "AbortError"))).toBe(true);
+    expect(interrupted(new DOMException("no supported source", "NotSupportedError"))).toBe(false);
+    expect(interrupted(new Error("boom"))).toBe(false);
+    expect(interrupted("AbortError")).toBe(false);
+    expect(interrupted(null)).toBe(false);
   });
 
   it("reduces peaks to one bar per slot, by maximum", () => {
