@@ -1,16 +1,56 @@
 // Vietnamese and English strings. Both dictionaries must have the same keys (tested).
+// A `<key>_one` variant is used instead of `<key>` when `{n}` is 1 (English singular;
+// Vietnamese has no plural, so its `_one` strings repeat the base text).
 
 import type { Language } from "./api";
 
 const vi = {
   tagline: "YouTube · TikTok · SoundCloud → nhạc",
   placeholder: "Dán link hoặc gõ tên bài hát…\nNhiều link: mỗi dòng một link",
-  download: "Tải về",
+  add: "Thêm vào khay",
+  saveAll: "● Tải {n} bài",
+  saveAll_one: "● Tải {n} bài",
   shortcut: "⌘/Ctrl + Enter",
   settings: "Cài đặt",
   emptyTitle: "Chưa có bài nào",
-  emptyHint: "Dán link YouTube, TikTok… hoặc gõ tên bài, rồi bấm Tải về.",
+  emptyHint: "Dán link YouTube, TikTok… hoặc gõ tên bài, rồi bấm Thêm vào khay. Nghe thử, cắt bớt nếu cần, rồi mới tải về.",
   "status.probing": "Đang đọc link…",
+  "status.ready": "Sẵn sàng",
+  trimmedSuffix: "đã cắt",
+  "tag.whole": "cả bài",
+  "tag.removed": "Đã bỏ {n} đoạn",
+  "tag.removed_one": "Đã bỏ {n} đoạn",
+  "tag.suggested": "gợi ý bỏ {time}",
+  playlistReady: "{n} bài · sẵn sàng",
+  playlistReady_one: "{n} bài · sẵn sàng",
+  "trim.open": "Nghe thử và cắt",
+  "trim.close": "Đóng",
+  "trim.loading": "Đang chuẩn bị bản nghe thử…",
+  "trim.failed": "Không tải được bản nghe thử: {message}",
+  "trim.retry": "Thử lại",
+  "trim.play": "Nghe thử",
+  "trim.pause": "Tạm dừng",
+  "trim.back": "Lùi mép đang chọn 1 giây",
+  "trim.forward": "Đẩy mép đang chọn 1 giây",
+  "trim.remove": "Bỏ đoạn đang chọn",
+  "trim.undo": "Hoàn tác",
+  "trim.saveWhole": "Tải cả bài ({time})",
+  "trim.saveCut": "● Tải bản đã cắt ({time})",
+  "trim.kept": "Giữ {kept} · bỏ {cut}",
+  "trim.skips": "Nghe thử tự nhảy qua đoạn đã bỏ.",
+  "trim.exists": "Đã có trong thư mục — bản đã cắt sẽ được lưu bên cạnh.",
+  "trim.suggest": "Tìm thấy {n} đoạn không phải nhạc: {list} · SponsorBlock",
+  "trim.suggest_one": "Tìm thấy {n} đoạn không phải nhạc: {list} · SponsorBlock",
+  "trim.acceptAll": "Bỏ hết",
+  "trim.dismiss": "Không",
+  "trim.help": "Kéo trên sóng nhạc để chọn một khúc, rồi bấm Bỏ đoạn. Kéo mép sọc đỏ để chỉnh lại.",
+  "sb.music_offtopic": "không phải nhạc",
+  "sb.sponsor": "tài trợ",
+  "sb.intro": "mở đầu",
+  "sb.outro": "kết thúc",
+  "sb.selfpromo": "tự quảng cáo",
+  "sb.interaction": "kêu gọi tương tác",
+  "sb.preview": "xem trước",
   "status.downloading": "Đang tải",
   "status.fallback": "yt-dlp đang tải…",
   "status.converting": "Đang chuyển sang {ext}…",
@@ -65,7 +105,8 @@ const vi = {
   "set.save": "Lưu",
   "set.close": "Đóng",
   "set.legal": "Chỉ tải nội dung bạn có quyền tải.",
-  keepAlive: "Đang tải {active} bài…",
+  keepAlive: "Đang tải {n} bài…",
+  keepAlive_one: "Đang tải {n} bài…",
 };
 
 type Key = keyof typeof vi;
@@ -73,12 +114,50 @@ type Key = keyof typeof vi;
 const en: Record<Key, string> = {
   tagline: "YouTube · TikTok · SoundCloud → music",
   placeholder: "Paste links or type a song name…\nSeveral links: one per line",
-  download: "Download",
+  add: "Add to tray",
+  saveAll: "● Download {n} tracks",
+  saveAll_one: "● Download {n} track",
   shortcut: "⌘/Ctrl + Enter",
   settings: "Settings",
   emptyTitle: "Nothing here yet",
-  emptyHint: "Paste a YouTube, TikTok… link or type a song name, then hit Download.",
+  emptyHint: "Paste a YouTube, TikTok… link or type a song name, then hit Add to tray. Listen, trim if you like, then download.",
   "status.probing": "Reading link…",
+  "status.ready": "Ready",
+  trimmedSuffix: "trimmed",
+  "tag.whole": "whole track",
+  "tag.removed": "{n} parts removed",
+  "tag.removed_one": "{n} part removed",
+  "tag.suggested": "suggested: remove {time}",
+  playlistReady: "{n} tracks · ready",
+  playlistReady_one: "{n} track · ready",
+  "trim.open": "Listen and trim",
+  "trim.close": "Close",
+  "trim.loading": "Getting the preview ready…",
+  "trim.failed": "Couldn't load the preview: {message}",
+  "trim.retry": "Retry",
+  "trim.play": "Play",
+  "trim.pause": "Pause",
+  "trim.back": "Move the selected edge 1 s back",
+  "trim.forward": "Move the selected edge 1 s forward",
+  "trim.remove": "Remove selected part",
+  "trim.undo": "Undo",
+  "trim.saveWhole": "Download whole track ({time})",
+  "trim.saveCut": "● Download trimmed ({time})",
+  "trim.kept": "Keep {kept} · cut {cut}",
+  "trim.skips": "The preview skips removed parts.",
+  "trim.exists": "Already in your folder — the trimmed copy is saved alongside.",
+  "trim.suggest": "Found {n} non-music parts: {list} · SponsorBlock",
+  "trim.suggest_one": "Found {n} non-music part: {list} · SponsorBlock",
+  "trim.acceptAll": "Remove all",
+  "trim.dismiss": "No",
+  "trim.help": "Drag on the waveform to select a part, then Remove it. Drag the edges of a red part to adjust it.",
+  "sb.music_offtopic": "non-music",
+  "sb.sponsor": "sponsor",
+  "sb.intro": "intro",
+  "sb.outro": "outro",
+  "sb.selfpromo": "self-promo",
+  "sb.interaction": "interaction reminder",
+  "sb.preview": "preview",
   "status.downloading": "Downloading",
   "status.fallback": "yt-dlp downloading…",
   "status.converting": "Converting to {ext}…",
@@ -133,7 +212,8 @@ const en: Record<Key, string> = {
   "set.save": "Save",
   "set.close": "Close",
   "set.legal": "Only download content you have the right to.",
-  keepAlive: "Downloading {active} tracks…",
+  keepAlive: "Downloading {n} tracks…",
+  keepAlive_one: "Downloading {n} track…",
 };
 
 export const dictionaries: Record<Language, Record<Key, string>> = { vi, en };
@@ -148,7 +228,16 @@ export const setLanguage = (lang: Language) => (current = lang);
 export const language = () => current;
 
 export function t(key: Key, vars: Record<string, string | number> = {}): string {
-  return dictionaries[current][key].replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? `{${name}}`));
+  const dict = dictionaries[current];
+  const one = `${key}_one`;
+  const text = vars.n === 1 && one in dict ? dict[one as Key] : dict[key];
+  return text.replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? `{${name}}`));
+}
+
+/** A SponsorBlock category as words; a category this app does not know shows as sent. */
+export function category(name: string): string {
+  const key = `sb.${name}`;
+  return key in dictionaries[current] ? t(key as Key) : name;
 }
 
 /** What to tell the user about a failed track. */

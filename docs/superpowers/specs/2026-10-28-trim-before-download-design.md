@@ -1,6 +1,6 @@
 # Listen, trim and join before saving — design
 
-Date: 2026-10-28 · Status: agreed in brainstorming, builder-checked, pending approval
+Date: 2026-10-28 · Status: implemented (branch feat/trim-before-download)
 
 ## Why
 

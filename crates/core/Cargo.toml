@@ -9,6 +9,8 @@ repository.workspace = true
 [features]
 # clap::ValueEnum for Format, used by the CLI.
 clap = ["dep:clap"]
+# `Track::for_tests`, for the app's unit tests.
+test-util = []
 
 [dependencies]
 anyhow.workspace = true
@@ -18,6 +20,7 @@ futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.11.1"
 tempfile.workspace = true
 tokio.workspace = true
 

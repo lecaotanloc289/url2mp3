@@ -21,6 +21,10 @@ pub struct Info {
     pub url: Option<String>,
     pub protocol: Option<String>,
     pub acodec: Option<String>,
+    /// Length in seconds, when the extractor knows it.
+    pub duration: Option<f64>,
+    /// yt-dlp's extractor, e.g. "Youtube".
+    pub extractor_key: Option<String>,
     pub filesize: Option<f64>,
     pub http_headers: Option<HashMap<String, String>>,
     /// Set-Cookie style string: `name=value; Domain=..; Path=..; name2=value2; ...`
@@ -261,11 +265,16 @@ mod tests {
     #[test]
     fn parses_flat_playlist() {
         let json = r#"{"_type":"playlist","title":"p","entries":[
-            {"_type":"url","url":"https://www.youtube.com/watch?v=a","title":"A"}, null]}"#;
+            {"_type":"url","url":"https://www.youtube.com/watch?v=a","title":"A","duration":272.4,"extractor_key":"Youtube"}, null]}"#;
         let info: Info = serde_json::from_str(json).unwrap();
         assert!(info.is_playlist());
         let entries = info.entries.unwrap();
         assert!(entries[0].as_ref().unwrap().is_reference());
+        assert_eq!(entries[0].as_ref().unwrap().duration, Some(272.4));
+        assert_eq!(
+            entries[0].as_ref().unwrap().extractor_key.as_deref(),
+            Some("Youtube")
+        );
         assert!(entries[1].is_none());
     }
 

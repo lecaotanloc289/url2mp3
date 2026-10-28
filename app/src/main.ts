@@ -5,10 +5,28 @@ import "@fontsource/be-vietnam-pro/600.css";
 import "./style.css";
 
 import { open as pickFolder } from "@tauri-apps/plugin-dialog";
-import { api, type Format, type Language, type Settings, type ToolsStatus } from "./api";
+import { api, type Format, type Language, type SaveItem, type Settings, type ToolsStatus } from "./api";
+import { formatTime } from "./cut";
 import { hint, language, pickLanguage, setLanguage, t } from "./i18n";
 import { sharedInput } from "./share";
-import { empty, groupStats, isFinished, percent, reduce, summary, type Group, type Msg, type Row } from "./state";
+import {
+  canOpen,
+  empty,
+  groupStats,
+  isFinished,
+  lengthText,
+  percent,
+  ready,
+  reduce,
+  resolving,
+  saveItem,
+  summary,
+  tag,
+  type Group,
+  type Msg,
+  type Row,
+} from "./state";
+import { openTrim, trimKey, updateTrim } from "./trim";
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector<T>(sel)!;
 
@@ -21,6 +39,8 @@ const autoRetried = new Set<string>();
 let android = false;
 /** Running tracks the Android notification last showed. */
 let keptAlive = 0;
+/** The one input just added: its trim dialog opens as soon as it is in the tray. */
+let pendingOpen: string | null = null;
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
@@ -34,21 +54,21 @@ function dispatch(msg: Msg) {
     const { active } = summary(state);
     if (active !== keptAlive) {
       keptAlive = active;
-      void api.keepAlive(active > 0, t("keepAlive", { active }));
+      void api.keepAlive(active > 0, t("keepAlive", { n: active }));
     }
   }
 }
 
 /**
- * Shared from another app: a link downloads straight away; other text (which any app could
- * send) only fills the input, for the user to confirm.
+ * Shared from another app: a link goes into the tray and opens its trim dialog, like pasting
+ * one link; other text (which any app could send) only fills the input, for the user to confirm.
  */
 async function takeShared() {
   const text = await api.takeShared().catch(() => null);
   const input = text && sharedInput(text);
   if (!input) return;
   if (/^https?:\/\//.test(input)) {
-    void enqueue([input]);
+    void addInputs([input]);
   } else {
     $<HTMLTextAreaElement>("#input").value = input;
   }
@@ -59,6 +79,7 @@ const ICONS = {
   retry: '<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/>',
   folder: '<path d="M3 7h6l2 2h10v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   remove: '<path d="M5 7h14M10 11v6M14 11v6M7 7l1 12h8l1-12M9 7V4h6v3"/>',
+  trim: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.6 7.6L20 18M8.6 16.4L20 6"/>',
 };
 
 function iconButton(icon: keyof typeof ICONS, title: string, onClick: () => void): HTMLButtonElement {
@@ -93,6 +114,16 @@ function renderList() {
   const s = summary(state);
   $("#summary").textContent = state.order.length ? t("summary", s) : "";
   $("#clear").hidden = s.done === 0;
+  const waiting = ready(state).length;
+  const saveAll = $<HTMLButtonElement>("#save-all");
+  saveAll.hidden = waiting === 0;
+  saveAll.textContent = t("saveAll", { n: waiting });
+  // Pressed now, it would leave out the links still being read.
+  const busy = resolving(state);
+  saveAll.disabled = busy;
+  saveAll.title = busy ? t("status.probing") : "";
+  const open = trimKey();
+  if (open) updateTrim(state.rows[open]);
 }
 
 function shell(key: string, cls: "track" | "group"): HTMLElement {
@@ -113,14 +144,24 @@ function shell(key: string, cls: "track" | "group"): HTMLElement {
       <div class="thumb"><img alt="" referrerpolicy="no-referrer" /></div>
       <div class="meta">
         <div class="title"></div>
-        <div class="sub"><span class="artist"></span><span class="status"></span></div>
+        <div class="sub"><span class="artist"></span><span class="status"></span><span class="tag"></span></div>
         <div class="meter"><i></i></div>
         <div class="hint"></div>
       </div>
       <div class="actions"></div>`;
+    // Tapping a tray track opens its trim dialog (a group's header toggles it instead).
+    if (cls === "track") el.addEventListener("click", () => openRow(key));
     nodes.set(key, el);
   }
   return el;
+}
+
+function tagText(row: Row): string {
+  if (row.status !== "ready") return "";
+  const g = tag(row);
+  if (g.kind === "removed") return `✂ ${t("tag.removed", { n: g.n })}`;
+  if (g.kind === "suggested") return t("tag.suggested", { time: formatTime(g.secs) });
+  return t("tag.whole");
 }
 
 function setText(el: HTMLElement, sel: string, text: string) {
@@ -138,6 +179,7 @@ function setActions(el: HTMLElement, buttons: HTMLButtonElement[]) {
 }
 
 function statusText(row: Row): string {
+  if (row.status === "ready") return lengthText(row);
   if (row.status === "downloading" && row.total > 0) return `${percent(row)}%`;
   return t(`status.${row.status}`, { ext: settings.format.toUpperCase() });
 }
@@ -149,18 +191,28 @@ function renderRow(row: Row, index?: number): HTMLElement {
   setText(el, ".title", row.title);
   setText(el, ".artist", row.artist ?? "");
   setText(el, ".status", statusText(row));
+  const tagEl = el.querySelector<HTMLElement>(".tag")!;
+  setText(el, ".tag", tagText(row));
+  tagEl.dataset.tag = row.status === "ready" ? tag(row).kind : "";
   const img = el.querySelector("img")!;
   if (row.thumbnail && img.getAttribute("src") !== row.thumbnail) img.src = row.thumbnail;
   el.classList.toggle("has-thumb", !!row.thumbnail);
-  el.querySelector<HTMLElement>(".meter i")!.style.setProperty("--p", `${percent(row)}%`);
+  el.classList.toggle("openable", canOpen(row));
+  const preview = row.status === "ready" ? row.preview : undefined;
+  el.dataset.preview = preview?.phase ?? "";
+  const p = preview ? (preview.total > 0 ? Math.min(100, Math.round((preview.done / preview.total) * 100)) : 0) : percent(row);
+  el.querySelector<HTMLElement>(".meter i")!.style.setProperty("--p", `${p}%`);
   setText(el, ".hint", row.status === "failed" ? `${row.message ?? ""} — ${t(hint(row.message ?? "", !!row.network))}` : "");
 
   const top = !row.parent;
+  const waiting = row.status === "ready";
   const buttons: HTMLButtonElement[] = [];
-  if (!isFinished(row.status) && top) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(row.gen, row.id)));
+  // Nothing runs for a tray row, so it has nothing to cancel.
+  if (!isFinished(row.status) && !waiting && top) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(row.id)));
   if (row.path && !android) buttons.push(iconButton("folder", t("reveal"), () => api.reveal(row.path!)));
   if ((row.status === "failed" || row.status === "cancelled") && top) buttons.push(iconButton("retry", t("retry"), () => retry(row.key)));
-  if (isFinished(row.status) && top) buttons.push(iconButton("remove", t("remove"), () => dispatch({ kind: "remove", key: row.key })));
+  if (canOpen(row)) buttons.push(iconButton("trim", t("trim.open"), () => openRow(row.key)));
+  if (waiting || (isFinished(row.status) && top)) buttons.push(iconButton("remove", t("remove"), () => removeEntry(row.key)));
   setActions(el, buttons);
   return el;
 }
@@ -168,20 +220,40 @@ function renderRow(row: Row, index?: number): HTMLElement {
 function renderGroup(group: Group, index: number): HTMLElement {
   const el = shell(group.key, "group");
   const stats = groupStats(state, group);
-  const running = group.children.some((k) => !isFinished(state.rows[k]?.status ?? "done"));
-  const finished = !running && (group.cancelled || stats.finished + stats.failed >= group.count);
-  el.dataset.status = group.cancelled ? "cancelled" : finished ? (stats.failed ? "failed" : "done") : "downloading";
+  const statuses = group.children.map((k) => state.rows[k]?.status ?? "done");
+  // Tray tracks wait for Download: neither running nor finished.
+  const running = statuses.some((s) => !isFinished(s) && s !== "ready");
+  const waiting = statuses.includes("ready");
+  const finished = !running && !waiting && (group.cancelled || stats.finished + stats.failed >= group.count);
+  const idle = !running && (waiting || finished);
+  el.dataset.status = running
+    ? "downloading"
+    : waiting
+      ? "ready"
+      : group.cancelled
+        ? "cancelled"
+        : finished
+          ? stats.failed
+            ? "failed"
+            : "done"
+          : "downloading";
   setText(el, ".no", String(index + 1).padStart(2, "0"));
   setText(el, ".title", group.title);
   setText(el, ".artist", "Playlist");
-  setText(el, ".status", [t("playlistCount", stats), stats.failed ? t("playlistFailed", stats) : ""].filter(Boolean).join(" · "));
+  setText(
+    el,
+    ".status",
+    waiting && !running && !stats.finished && !stats.failed
+      ? t("playlistReady", { n: group.count })
+      : [t("playlistCount", stats), stats.failed ? t("playlistFailed", stats) : ""].filter(Boolean).join(" · "),
+  );
   el.querySelector<HTMLElement>(".meter i")!.style.setProperty("--p", `${group.count ? Math.round(((stats.finished + stats.failed) / group.count) * 100) : 0}%`);
   setText(el, ".hint", "");
 
   const buttons: HTMLButtonElement[] = [];
-  if (!finished) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(group.gen, group.id)));
+  if (!idle) buttons.push(iconButton("cancel", t("cancel"), () => api.cancel(group.id)));
   if (finished && (stats.failed || group.cancelled)) buttons.push(iconButton("retry", t("retry"), () => retry(group.key)));
-  if (finished) buttons.push(iconButton("remove", t("remove"), () => dispatch({ kind: "remove", key: group.key })));
+  if (idle) buttons.push(iconButton("remove", t("remove"), () => removeEntry(group.key)));
   setActions(el, buttons);
 
   let children = el.querySelector<HTMLElement>(".children");
@@ -190,6 +262,8 @@ function renderGroup(group: Group, index: number): HTMLElement {
     children.className = "children";
     el.append(children);
     el.querySelector(".meta")!.addEventListener("click", () => el.classList.toggle("open"));
+    // A playlist enters the tray open, so each track can be tapped to trim.
+    el.classList.add("open");
   }
   group.children.forEach((key, i) => {
     const child = renderRow(state.rows[key]);
@@ -203,7 +277,7 @@ function renderGroup(group: Group, index: number): HTMLElement {
 async function enqueue(inputs: string[]): Promise<boolean> {
   if (!inputs.length) return false;
   try {
-    await api.enqueue(inputs);
+    await api.add(inputs);
     return true;
   } catch (e) {
     toast(String(e) === "ytdlp-missing" ? t("ytdlpMissing") : String(e));
@@ -211,18 +285,85 @@ async function enqueue(inputs: string[]): Promise<boolean> {
   }
 }
 
+/** Adds inputs to the tray; a single one opens its trim dialog once it arrives. */
+async function addInputs(inputs: string[]): Promise<boolean> {
+  pendingOpen = inputs.length === 1 ? inputs[0] : null;
+  const ok = await enqueue(inputs);
+  if (!ok) pendingOpen = null;
+  return ok;
+}
+
+function openRow(key: string) {
+  const row = state.rows[key];
+  if (row && canOpen(row)) openTrim(row, { language: language(), dispatch, onSave: (item) => save([item]) });
+}
+
+/**
+ * Download pressed: rows show as downloading before the command runs; if the command itself
+ * rejects, nothing runs for them, so they fail with its message (Retry saves them again).
+ */
+function save(items: SaveItem[]) {
+  if (!items.length) return;
+  const keys = items.map((i) => String(i.id));
+  const keysOf = (whole: boolean) => items.filter((i) => (i.cut === null) === whole).map((i) => String(i.id));
+  // `whole` remembers how each row was saved, so Retry repeats exactly that.
+  dispatch({ kind: "saving", keys: keysOf(true), whole: true });
+  dispatch({ kind: "saving", keys: keysOf(false) });
+  api.save(items).catch((e) => {
+    dispatch({ kind: "saveFailed", keys, message: String(e) });
+    toast(String(e));
+  });
+}
+
+function saveAll() {
+  if (resolving(state)) return;
+  save(ready(state).map((k) => saveItem(state.rows[k], t("trimmedSuffix"))));
+}
+
+/** Removes a row, playlist track or group and drops its tray entry and cache in the backend. */
+function removeEntry(key: string) {
+  const id = state.groups[key]?.id ?? state.rows[key]?.id;
+  dispatch({ kind: "remove", key });
+  if (id !== undefined) void api.discard([id]).catch(() => {});
+}
+
+/** Clears finished rows and groups, and their caches in the backend. */
+function clearFinished() {
+  const before = state;
+  dispatch({ kind: "clearFinished" });
+  const ids = before.order
+    .filter((k) => !state.order.includes(k))
+    .map((k) => before.groups[k]?.id ?? before.rows[k]?.id)
+    .filter((id): id is number => id !== undefined);
+  if (ids.length) void api.discard(ids).catch(() => {});
+}
+
+/** Saves rows again from the tray's cache, keeping their cuts (or whole, if saved whole). */
+function resave(rows: Row[]) {
+  save(rows.map((r) => saveItem(r, t("trimmedSuffix"))));
+}
+
 function retry(key: string) {
+  const group = state.groups[key];
+  const rows = group ? group.children.map((k) => state.rows[k]) : [state.rows[key]];
+  const again = rows.filter((r) => r?.saved && (r.status === "failed" || r.status === "cancelled"));
+  if (again.length) {
+    resave(again);
+    return;
+  }
   const input = state.groups[key]?.input ?? state.rows[key]?.input;
   if (!input) return;
-  dispatch({ kind: "remove", key });
+  removeEntry(key);
   void enqueue([input]);
 }
 
 async function submit() {
   const box = $<HTMLTextAreaElement>("#input");
   const inputs = box.value.split("\n").map((s) => s.trim()).filter(Boolean);
-  if (await enqueue([...new Set(inputs)])) box.value = "";
-  box.focus();
+  if (await addInputs([...new Set(inputs)])) box.value = "";
+  // Not when the trim dialog is open or about to open by itself (`pendingOpen`), nor on
+  // Android at all: the soft keyboard would come up over the dialog.
+  if (!android && pendingOpen === null && !trimKey()) box.focus();
 }
 
 let toastTimer = 0;
@@ -352,11 +493,20 @@ async function main() {
   applyLanguage();
   showFormat();
 
-  await api.onEngine(({ gen, event }) => {
-    dispatch({ kind: "engine", gen, event });
+  await api.onTray((event) => {
+    dispatch({ kind: "tray", event });
+    // The single input just added became one track (not a playlist): open it. The pending
+    // input stays set after an add failure, so retrying that link still opens it.
+    if (pendingOpen !== null && event.input === pendingOpen) {
+      pendingOpen = null;
+      if (event.kind === "added" && event.parent === null) openRow(String(event.id));
+    }
+  });
+  await api.onEngine(({ event }) => {
+    dispatch({ kind: "engine", event });
     // One automatic retry for a link that failed on a network hiccup.
     if (event.kind === "failed" && event.network && event.parent === null) {
-      const key = `${gen}:${event.id}`;
+      const key = String(event.id);
       const input = state.rows[key]?.input;
       if (input && !autoRetried.has(input)) {
         autoRetried.add(input);
@@ -379,7 +529,8 @@ async function main() {
   for (const b of document.querySelectorAll<HTMLButtonElement>("#formats button")) {
     b.addEventListener("click", () => saveSettings({ ...settings, format: b.dataset.format as Format }));
   }
-  $("#clear").addEventListener("click", () => dispatch({ kind: "clearFinished" }));
+  $("#clear").addEventListener("click", clearFinished);
+  $("#save-all").addEventListener("click", saveAll);
   $("#open-settings").addEventListener("click", openSettings);
   $("#close-settings").addEventListener("click", () => $<HTMLDialogElement>("#settings").close());
   $("#choose-dir").addEventListener("click", async () => {

@@ -1,5 +1,8 @@
 //! The per-link pipeline: probe with yt-dlp, expand playlists, skip what exists, download,
 //! convert, move into place. It reports what happens as `Event`s and draws nothing itself.
+//!
+//! The stages are public so the app can stop between them (`resolve` into its tray, `fetch` the
+//! audio to listen and cut, `save` from that audio); `process` chains them for the CLI.
 
 use std::{
     collections::HashSet,
@@ -11,13 +14,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use futures_util::future::join_all;
 use serde::Serialize;
 use tempfile::TempDir;
-use tokio::sync::Semaphore;
+use tokio::sync::{OnceCell, Semaphore};
 
 use crate::{
+    cut::{Cut, normalize},
     download::{Downloader, Progress},
     names::{fit, is_network_error, path_key, sanitize},
     resolve::{Info, Ytdlp},
@@ -125,11 +129,84 @@ pub enum Outcome {
     Failed { network: bool },
 }
 
+/// One track as yt-dlp described it: what the app shows in its tray, and what `fetch` and
+/// `save` need. A flat playlist entry only knows its page until `probe_track` reads it.
+/// Not `Debug`: the yt-dlp JSON inside carries cookies.
+#[derive(Clone)]
+pub struct Track {
+    pub title: String,
+    pub artist: Option<String>,
+    pub thumbnail: Option<String>,
+    /// Seconds, when the extractor knows it.
+    pub duration: Option<f64>,
+    pub video_id: Option<String>,
+    /// A YouTube video (the only kind SponsorBlock knows).
+    pub youtube: bool,
+    info: Arc<Info>,
+    /// The yt-dlp format selector `info` was read with: its stream is the one picked for that
+    /// engine's format. An engine of another format reads the track again before downloading
+    /// it (see `save`).
+    selector: &'static str,
+}
+
+impl Track {
+    fn new(info: Info, selector: &'static str) -> Self {
+        // A flat entry goes by its page until probed, as its `Probing` label always did.
+        let title = if info.is_reference() {
+            info.title
+                .clone()
+                .or_else(|| info.url.clone())
+                .unwrap_or_else(|| "?".into())
+        } else {
+            let title = info.title.clone().or_else(|| info.id.clone());
+            title.unwrap_or_else(|| "untitled".into())
+        };
+        Self {
+            title,
+            artist: info.display_artist().map(str::to_owned),
+            thumbnail: info.thumbnail.clone(),
+            duration: info.duration,
+            video_id: info.id.clone(),
+            youtube: info.extractor_key.as_deref() == Some("Youtube"),
+            info: Arc::new(info),
+            selector,
+        }
+    }
+
+    /// A flat playlist entry: `probe_track` it before `fetch` (`save` probes it itself).
+    pub fn needs_probe(&self) -> bool {
+        self.info.is_reference()
+    }
+
+    /// yt-dlp's codec name for the picked audio stream ("opus", "mp4a.40.2"…), or "".
+    pub fn codec(&self) -> &str {
+        self.info.acodec.as_deref().unwrap_or("")
+    }
+
+    /// A probed track with only a title, for tests of code that stores tracks.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn for_tests(title: &str) -> Self {
+        let info = serde_json::from_value(serde_json::json!({ "title": title })).expect("Info from a title");
+        Self::new(info, Format::Mp3.selector())
+    }
+}
+
+#[derive(Clone)]
+pub enum Resolved {
+    Track(Track),
+    /// `title` is already the name of the playlist's folder inside the output folder.
+    Playlist {
+        title: String,
+        tracks: Vec<Track>,
+    },
+}
+
 pub struct Engine {
     ytdlp: Ytdlp,
     dl: Downloader,
     tools: Tools,
-    tmp: TempDir,
+    /// Made by the first save (see `tmp`), removed when the engine is dropped.
+    tmp: OnceCell<TempDir>,
     sem: Semaphore,
     next: AtomicU64,
     /// Names temp files; separate from `Id`, which callers may reuse.
@@ -142,22 +219,15 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Creates the output folder and a temp folder inside it (removed when the engine is
-    /// dropped), after clearing temp folders left behind by a killed run. `sink` is called from
-    /// the download tasks and must return quickly: queue the event, don't block on it.
+    /// Touches nothing on disk: the output folder is only created by the first save (see
+    /// `tmp`), so an app can resolve links and fetch audio before the user decides to save.
+    /// `sink` is called from the download tasks and must return quickly: queue the event,
+    /// don't block on it.
     pub async fn start(
         tools: Tools,
         opts: Options,
         sink: impl Fn(Event) + Send + Sync + 'static,
     ) -> Result<Arc<Self>> {
-        tokio::fs::create_dir_all(&opts.out)
-            .await
-            .with_context(|| format!("tạo {}", opts.out.display()))?;
-        sweep_stale_temp(&opts.out).await;
-        // Inside the output dir so the final rename never crosses filesystems.
-        let tmp = tempfile::Builder::new()
-            .prefix(".url2mp3-")
-            .tempdir_in(&opts.out)?;
         Ok(Arc::new(Self {
             ytdlp: Ytdlp::new(
                 tools.clone(),
@@ -168,7 +238,7 @@ impl Engine {
             ),
             dl: Downloader::new(opts.connections.max(1))?,
             tools,
-            tmp,
+            tmp: OnceCell::new(),
             sem: Semaphore::new(opts.jobs.max(1)),
             next: AtomicU64::new(0),
             scratch: AtomicU64::new(0),
@@ -183,122 +253,252 @@ impl Engine {
         self.next.fetch_add(1, Relaxed)
     }
 
+    /// The programs this engine runs, for the preview copy and peaks of a fetched track.
+    pub fn tools(&self) -> &Tools {
+        &self.tools
+    }
+
     /// A link, playlist or search query → one or more tracks. Dropping the future (or aborting
     /// its task) kills every yt-dlp/ffmpeg it started, playlist tracks included. Cancelling
     /// sends no event, and the tracks give back their claims only once the future is dropped:
     /// after aborting a task, await its `JoinHandle` before starting the same link again, or it
     /// is taken for a duplicate.
     pub async fn process(self: Arc<Self>, id: Id, input: String) -> Vec<Outcome> {
-        let search = !(input.starts_with("http://") || input.starts_with("https://"));
+        // A single track keeps the permit from its probe to its file, as it always did: with
+        // `jobs` links at work the next one waits rather than probing ahead of their downloads.
         let permit = self.sem.acquire().await.expect("semaphore never closed");
+        let (title, tracks) = match self.resolve_now(id, &input).await {
+            Err(e) => return vec![self.fail(id, None, &input, e)],
+            Ok(Resolved::Track(track)) => {
+                return vec![self.save_now(id, None, &track, None, None, None).await];
+            }
+            Ok(Resolved::Playlist { title, tracks }) => (title, tracks),
+        };
+        drop(permit);
+
+        self.emit(Event::Playlist {
+            id,
+            title: title.clone(),
+            count: tracks.len(),
+        });
+        // Futures of this task rather than spawned tasks: cancelling the link drops them (and
+        // their yt-dlp/ffmpeg, and their claims) at once. The semaphore bounds the work.
+        let (engine, title) = (&*self, title.as_str());
+        let saves = tracks.iter().map(|track| {
+            let child = engine.next_id();
+            async move {
+                let _permit = engine.sem.acquire().await.expect("semaphore never closed");
+                engine
+                    .save_now(child, Some(id), track, Some(title), None, None)
+                    .await
+            }
+        });
+        join_all(saves).await
+    }
+
+    /// A link or search query → one track or a playlist of (usually flat) tracks. Emits
+    /// `Probing` and holds a job permit while yt-dlp reads; failures are the caller's to report.
+    pub async fn resolve(&self, id: Id, input: &str) -> Result<Resolved> {
+        let _permit = self.sem.acquire().await.expect("semaphore never closed");
+        self.resolve_now(id, input).await
+    }
+
+    /// `resolve` inside a permit the caller holds.
+    async fn resolve_now(&self, id: Id, input: &str) -> Result<Resolved> {
+        let search = !(input.starts_with("http://") || input.starts_with("https://"));
         self.emit(Event::Probing {
             id,
             parent: None,
-            label: input.clone(),
+            label: input.to_owned(),
         });
         // Searches are not flattened: yt-dlp resolves the hit in the same call.
         let target = if search {
             format!("ytsearch1:{input}")
         } else {
-            input.clone()
+            input.to_owned()
         };
-        let info = match self.ytdlp.probe(&target, !search).await {
-            Ok(info) => info,
-            Err(e) => return vec![self.fail(id, None, &input, e)],
-        };
-        let out = self.opts.out.clone();
+        let info = self.ytdlp.probe(&target, !search).await?;
         if !info.is_playlist() {
-            return vec![self.track(id, None, &info, &out).await];
+            return Ok(Resolved::Track(self.track(info)));
         }
+        let mut entries = info.entries.into_iter().flatten().flatten();
         if search {
-            // ytsearch1 is a one-entry playlist: the hit keeps the search's id.
-            return match info.entries.into_iter().flatten().flatten().next() {
-                Some(hit) => vec![self.entry(id, None, hit, &out).await],
-                None => vec![self.fail(id, None, &input, anyhow!("không tìm thấy bài nào"))],
-            };
+            // ytsearch1 is a one-entry playlist: the hit stands for the search.
+            let hit = entries.next().ok_or_else(|| anyhow!("không tìm thấy bài nào"))?;
+            return Ok(Resolved::Track(self.track(hit)));
         }
-        drop(permit);
-
-        let entries: Vec<Info> = info.entries.into_iter().flatten().flatten().collect();
         // Leave the tracks inside at least ~100 characters of path.
-        let name = fit(
-            &out,
+        let title = fit(
+            &self.opts.out,
             &sanitize(info.title.as_deref().unwrap_or("playlist")),
             &"x".repeat(100),
         );
-        self.emit(Event::Playlist {
-            id,
-            title: name.clone(),
-            count: entries.len(),
-        });
-        let dir = out.join(name);
-        // Futures of this task rather than spawned tasks: cancelling the link drops them (and
-        // their yt-dlp/ffmpeg, and their claims) at once. The semaphore bounds the work.
-        let (engine, dir) = (&*self, &dir);
-        let tracks = entries.into_iter().map(|entry| {
-            let child = engine.next_id();
-            async move {
-                let _permit = engine.sem.acquire().await.expect("semaphore never closed");
-                engine.entry(child, Some(id), entry, dir).await
-            }
-        });
-        join_all(tracks).await
+        Ok(Resolved::Playlist {
+            title,
+            tracks: entries.map(|e| self.track(e)).collect(),
+        })
     }
 
-    /// A playlist entry or search hit. Flat entries only hold a page URL and are probed first.
-    async fn entry(&self, id: Id, parent: Option<Id>, entry: Info, dir: &Path) -> Outcome {
-        if !entry.is_reference() {
-            return self.track(id, parent, &entry, dir).await;
+    /// What yt-dlp read with this engine's format selector.
+    fn track(&self, info: Info) -> Track {
+        Track::new(info, self.opts.format.selector())
+    }
+
+    /// Reads a flat playlist entry in full; any other track comes back as it is. Emits nothing
+    /// and takes no job permit.
+    pub async fn probe_track(&self, track: &Track) -> Result<Track> {
+        if !track.needs_probe() {
+            return Ok(track.clone());
         }
-        let label = entry
-            .title
+        let url = track
+            .info
+            .url
             .as_deref()
-            .or(entry.url.as_deref())
-            .unwrap_or("?")
-            .to_owned();
-        let Some(url) = entry.url.as_deref() else {
-            return self.fail(id, parent, &label, anyhow!("playlist thiếu link bài"));
-        };
-        self.emit(Event::Probing {
-            id,
-            parent,
-            label: label.clone(),
-        });
-        match self.ytdlp.probe(url, true).await {
-            Ok(info) if info.is_playlist() => self.fail(
-                id,
-                parent,
-                &label,
-                anyhow!("playlist lồng nhau, hãy dán trực tiếp link playlist con"),
-            ),
-            Ok(info) => self.track(id, parent, &info, dir).await,
-            Err(e) => self.fail(id, parent, &label, e),
+            .ok_or_else(|| anyhow!("playlist thiếu link bài"))?;
+        let info = self.ytdlp.probe(url, true).await?;
+        if info.is_playlist() {
+            bail!("playlist lồng nhau, hãy dán trực tiếp link playlist con");
         }
+        Ok(self.track(info))
     }
 
-    async fn track(&self, id: Id, parent: Option<Id>, info: &Info, dir: &Path) -> Outcome {
-        let title = info
-            .title
-            .clone()
-            .or_else(|| info.id.clone())
-            .unwrap_or_else(|| "untitled".into());
-        match self.try_track(id, parent, info, &title, dir).await {
-            Ok(o) => o,
-            Err(e) => self.fail(id, parent, &title, e),
+    /// Reads `track` again from its page with this engine's format selector, so it carries the
+    /// stream this engine's format picks; a flat entry is probed as by `probe_track`. Emits
+    /// nothing and takes no job permit.
+    pub async fn reprobe(&self, track: &Track) -> Result<Track> {
+        if track.needs_probe() {
+            return self.probe_track(track).await;
         }
+        let page = track
+            .info
+            .webpage_url
+            .as_deref()
+            .context("không có link gốc để đọc lại")?;
+        let info = self.ytdlp.probe(page, true).await?;
+        ensure!(!info.is_playlist(), "link gốc của bài là một playlist");
+        Ok(self.track(info))
     }
 
-    async fn try_track(
+    /// `track` was read by an engine of another format: its stream is that format's pick, so
+    /// `reprobe` it before downloading (`save` does that itself).
+    pub fn picked_for_another_format(&self, track: &Track) -> bool {
+        !track.needs_probe() && track.selector != self.opts.format.selector()
+    }
+
+    /// Downloads the track's audio stream (the one picked for the format of the engine that
+    /// read the track) to `to`, emitting `Progress` or `Fallback` under `id`. The file only
+    /// appears at `to` once complete: it is written to `<to>.part`, which is removed if the
+    /// download fails or the future is dropped (its yt-dlp is killed with it).
+    pub async fn fetch(&self, id: Id, track: &Track, to: &Path) -> Result<()> {
+        ensure!(!track.needs_probe(), "bài trong playlist chưa được đọc");
+        // yt-dlp writes `<its -o>.part` itself while downloading: remove that one too.
+        let part = with_suffix(to, ".part");
+        let scratch = Scratch([with_suffix(&part, ".part"), part]);
+        let part = &scratch.0[1];
+        self.fetch_audio(id, &track.info, part).await?;
+        tokio::fs::rename(part, to).await?;
+        Ok(())
+    }
+
+    /// Where an untrimmed `save` of `track` would put it, without claiming anything. The
+    /// session may still choose another name (`[id]` added) when two videos share a title, and
+    /// a flat entry's title is only final once `probe_track` has read it.
+    pub fn whole_destination(&self, track: &Track, playlist: Option<&str>) -> PathBuf {
+        let dir = self.dir(playlist);
+        named(
+            &dir,
+            &sanitize(&track.title),
+            &format!(".{}", self.opts.format.ext()),
+        )
+    }
+
+    /// Encodes `track` into the output folder (inside the `playlist` folder if given) with the
+    /// engine's settings, emitting `Track` … `Done`/`Skipped`/`Failed` under `id`. Takes a job
+    /// permit, and probes a flat entry first (or, without `audio`, a track read by an engine of
+    /// another format: see `reprobe`).
+    ///
+    /// `audio`: the stream already fetched by `fetch`; it is read, never moved or deleted, and
+    /// nothing is downloaded for it. Without it the audio is fetched into the engine's temp dir.
+    ///
+    /// `cut`: keep only `cut.keep`, re-encoded, as `<title> (<label>).<ext>` (then
+    /// `(<label> 2)`…). Such a copy never replaces a file and is never skipped, whether or not
+    /// this video was already saved. Without it the whole track is saved, skipped when the
+    /// video already ran in this session or its file exists (unless `force`).
+    pub async fn save(
         &self,
         id: Id,
         parent: Option<Id>,
-        info: &Info,
-        title: &str,
+        track: &Track,
+        playlist: Option<&str>,
+        audio: Option<&Path>,
+        cut: Option<&Cut>,
+    ) -> Outcome {
+        let _permit = self.sem.acquire().await.expect("semaphore never closed");
+        self.save_now(id, parent, track, playlist, audio, cut).await
+    }
+
+    /// `save` inside a permit the caller holds.
+    async fn save_now(
+        &self,
+        id: Id,
+        parent: Option<Id>,
+        track: &Track,
+        playlist: Option<&str>,
+        audio: Option<&Path>,
+        cut: Option<&Cut>,
+    ) -> Outcome {
+        let probed;
+        // A flat entry is read in full; a track read for another format (the app's tray keeps
+        // tracks across settings) is read again when it is about to be downloaded, so the
+        // stream is this format's pick (e.g. AAC for M4A, copied rather than re-encoded).
+        // Cached audio is encoded as it is: it is never downloaded again.
+        let stale = audio.is_none() && self.picked_for_another_format(track);
+        let track = if track.needs_probe() || stale {
+            if track.info.url.is_some() || stale {
+                self.emit(Event::Probing {
+                    id,
+                    parent,
+                    label: track.title.clone(),
+                });
+            }
+            match self.reprobe(track).await {
+                Ok(t) => {
+                    probed = t;
+                    &probed
+                }
+                Err(e) => return self.fail(id, parent, &track.title, e),
+            }
+        } else {
+            track
+        };
+        let dir = self.dir(playlist);
+        match self.try_save(id, parent, track, &dir, audio, cut).await {
+            Ok(o) => o,
+            Err(e) => self.fail(id, parent, &track.title, e),
+        }
+    }
+
+    async fn try_save(
+        &self,
+        id: Id,
+        parent: Option<Id>,
+        track: &Track,
         dir: &Path,
+        audio: Option<&Path>,
+        cut: Option<&Cut>,
     ) -> Result<Outcome> {
         let started = Instant::now();
+        let (info, title) = (&*track.info, track.title.as_str());
         let name = sanitize(title);
         let ext = self.opts.format.ext();
+        let keep = match cut {
+            Some(cut) => {
+                let keep = normalize(&cut.keep);
+                ensure!(!keep.is_empty(), "không còn đoạn nào để lưu");
+                Some(keep)
+            }
+            None => None,
+        };
         let skip = |reason: Skip| -> Result<Outcome> {
             self.emit(Event::Skipped {
                 id,
@@ -313,38 +513,44 @@ impl Engine {
             keys: Vec::new(),
             keep: false,
         };
-        // Same video reached twice (plain link + its &list= link, or two playlists).
-        if let Some(vid) = info.id.as_deref()
-            && !claims.take(format!("id:{vid}"))
-        {
-            return skip(Skip::Duplicate);
-        }
-        let suffix = format!(".{ext}");
-        let mut dest = dir.join(format!("{}{suffix}", fit(dir, &name, &suffix)));
-        if !claims.take(path_key(&dest)) {
-            // Same title twice in one run (e.g. two "original sound" TikToks): add the id.
-            let vid = sanitize(info.id.as_deref().unwrap_or("2"));
-            let suffix = format!(" [{vid}].{ext}");
-            dest = dir.join(format!("{}{suffix}", fit(dir, &name, &suffix)));
-            if !claims.take(path_key(&dest)) {
+        let dest = if let Some(cut) = cut {
+            self.trimmed_destination(&mut claims, dir, &name, &cut.label)
+                .await
+                .ok_or_else(|| anyhow!("đã có quá nhiều bản cắt của bài này"))?
+        } else {
+            // Same video reached twice (plain link + its &list= link, or two playlists).
+            if let Some(vid) = info.id.as_deref()
+                && !claims.take(format!("id:{vid}"))
+            {
                 return skip(Skip::Duplicate);
             }
-        }
-        if !self.opts.force && tokio::fs::try_exists(&dest).await.unwrap_or(false) {
-            // Keep the name taken: another video with this title must not land on it either.
-            claims.keep = true;
-            return skip(Skip::Exists(dest));
-        }
+            let mut dest = named(dir, &name, &format!(".{ext}"));
+            if !claims.take(path_key(&dest)) {
+                // Same title twice in one run (e.g. two "original sound" TikToks): add the id.
+                let vid = sanitize(info.id.as_deref().unwrap_or("2"));
+                dest = named(dir, &name, &format!(" [{vid}].{ext}"));
+                if !claims.take(path_key(&dest)) {
+                    return skip(Skip::Duplicate);
+                }
+            }
+            if !self.opts.force && tokio::fs::try_exists(&dest).await.unwrap_or(false) {
+                // Keep the name taken: another video with this title must not land on it either.
+                claims.keep = true;
+                return skip(Skip::Exists(dest));
+            }
+            dest
+        };
+        // Creates the output folder first, with a clear error if it can't.
+        let tmp = self.tmp().await?;
         tokio::fs::create_dir_all(dir).await?;
         self.emit(Event::Track {
             id,
             parent,
             title: title.to_owned(),
-            artist: info.display_artist().map(str::to_owned),
-            thumbnail: info.thumbnail.clone(),
+            artist: track.artist.clone(),
+            thumbnail: track.thumbnail.clone(),
         });
 
-        let tmp = self.tmp.path();
         // Another url2mp3 may have swept our temp dir as stale while this engine sat idle.
         tokio::fs::create_dir_all(tmp).await?;
         let n = self.scratch.fetch_add(1, Relaxed);
@@ -353,7 +559,7 @@ impl Engine {
             tmp.join(format!("{n}.cover")),
             tmp.join(format!("{n}.{ext}")),
         ]);
-        let [audio, cover, encoded] = &scratch.0;
+        let [fetched, cover, encoded] = &scratch.0;
 
         let thumb = info
             .thumbnail
@@ -365,23 +571,33 @@ impl Engine {
                 None => false,
             }
         };
-        let (audio_res, has_cover) = tokio::join!(self.fetch_audio(id, info, audio), fetch_cover);
-        audio_res?;
+        let fetch_audio = async {
+            match audio {
+                Some(cached) => Ok(cached),
+                None => self
+                    .fetch_audio(id, info, fetched)
+                    .await
+                    .map(|()| fetched.as_path()),
+            }
+        };
+        let (audio_res, has_cover) = tokio::join!(fetch_audio, fetch_cover);
+        let input = audio_res?;
 
         self.emit(Event::Converting { id });
         let job = |with_cover: bool| transcode::Job {
-            input: audio,
+            input,
             cover: with_cover.then_some(cover.as_path()),
             output: encoded,
             format: self.opts.format,
-            src_codec: info.acodec.as_deref().unwrap_or(""),
+            src_codec: track.codec(),
             bitrate: self.opts.bitrate,
             tags: Tags {
                 title,
-                artist: info.display_artist(),
+                artist: track.artist.as_deref(),
                 album: info.album.as_deref(),
                 comment: info.webpage_url.as_deref(),
             },
+            keep: keep.as_deref(),
         };
         let mut encoded_ok = transcode::encode(&self.tools, job(has_cover)).await;
         if encoded_ok.is_err() && has_cover {
@@ -426,6 +642,57 @@ impl Engine {
             .as_deref()
             .context("không có link gốc để tải lại")?;
         self.ytdlp.download(page, path, self.dl.connections).await
+    }
+
+    /// `<name> (<label>).<ext>`, else `(<label> 2)` … `(<label> 99)`: the first name neither
+    /// on disk nor taken in this session, claimed. None when all are.
+    async fn trimmed_destination(
+        &self,
+        claims: &mut Claims<'_>,
+        dir: &Path,
+        name: &str,
+        label: &str,
+    ) -> Option<PathBuf> {
+        let (label, ext) = (sanitize(label), self.opts.format.ext());
+        for n in 1..=99 {
+            let tag = match n {
+                1 => label.clone(),
+                n => format!("{label} {n}"),
+            };
+            let dest = named(dir, name, &format!(" ({tag}).{ext}"));
+            // Unknown counts as taken: a trimmed copy must never replace a file.
+            if !tokio::fs::try_exists(&dest).await.unwrap_or(true) && claims.take(path_key(&dest)) {
+                return Some(dest);
+            }
+        }
+        None
+    }
+
+    /// This engine's temp folder. The first call creates the output folder, clears temp
+    /// folders left behind by a killed run and makes ours inside it, so the final rename never
+    /// crosses filesystems; a call after a failure (folder not writable…) tries again.
+    async fn tmp(&self) -> Result<&Path> {
+        let tmp = self
+            .tmp
+            .get_or_try_init(|| async {
+                let out = &self.opts.out;
+                tokio::fs::create_dir_all(out)
+                    .await
+                    .with_context(|| format!("tạo {}", out.display()))?;
+                sweep_stale_temp(out).await;
+                let tmp = tempfile::Builder::new().prefix(".url2mp3-").tempdir_in(out)?;
+                anyhow::Ok(tmp)
+            })
+            .await?;
+        Ok(tmp.path())
+    }
+
+    /// The output folder, or the playlist's folder inside it.
+    fn dir(&self, playlist: Option<&str>) -> PathBuf {
+        match playlist {
+            Some(name) => self.opts.out.join(name),
+            None => self.opts.out.clone(),
+        }
     }
 
     fn fail(&self, id: Id, parent: Option<Id>, label: &str, err: anyhow::Error) -> Outcome {
@@ -481,11 +748,24 @@ impl Drop for Claims<'_> {
     }
 }
 
-/// One track's temp files (audio, cover, encoded), removed on drop whether the track
-/// finished, failed or was cancelled, so a long-lived engine doesn't pile them up.
-struct Scratch([PathBuf; 3]);
+/// `dir/<name fitted to the path limit><suffix>`.
+fn named(dir: &Path, name: &str, suffix: &str) -> PathBuf {
+    dir.join(format!("{}{suffix}", fit(dir, name, suffix)))
+}
 
-impl Drop for Scratch {
+/// `path` with `suffix` appended to its file name (`a.audio` → `a.audio.part`).
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(suffix);
+    s.into()
+}
+
+/// Temp files (a track's audio, cover and encoded file; a fetch's partial download), removed
+/// on drop whether the work finished, failed or was cancelled, so a long-lived engine doesn't
+/// pile them up.
+struct Scratch<const N: usize>([PathBuf; N]);
+
+impl<const N: usize> Drop for Scratch<N> {
     fn drop(&mut self) {
         for path in &self.0 {
             let _ = std::fs::remove_file(path);
@@ -541,17 +821,22 @@ impl Progress for Throttled<'_> {
     }
 }
 
-/// Remove `.url2mp3-*` temp dirs left by a run that was killed or crashed. Only ones untouched
-/// for an hour (the dir and every file in it, which a running download keeps writing), so
-/// another url2mp3 working right now keeps its own.
+/// Remove `.url2mp3-*` temp dirs left by a run that was killed or crashed.
 async fn sweep_stale_temp(out: &Path) {
-    let Ok(mut dir) = tokio::fs::read_dir(out).await else {
+    remove_stale_dirs(out, ".url2mp3-").await;
+}
+
+/// Remove the folders in `parent` whose name starts with `prefix`, left by a run that was
+/// killed or crashed. Only ones untouched for an hour (the dir and every entry directly in it,
+/// which running work keeps writing), so another url2mp3 working right now keeps its own.
+pub async fn remove_stale_dirs(parent: &Path, prefix: &str) {
+    let Ok(mut dir) = tokio::fs::read_dir(parent).await else {
         return;
     };
     while let Ok(Some(entry)) = dir.next_entry().await {
         let is_dir = entry.file_type().await.is_ok_and(|t| t.is_dir());
         if is_dir
-            && entry.file_name().to_string_lossy().starts_with(".url2mp3-")
+            && entry.file_name().to_string_lossy().starts_with(prefix)
             && idle_for(&entry.path()).await > Duration::from_secs(3600)
         {
             let _ = tokio::fs::remove_dir_all(entry.path()).await;

@@ -3,6 +3,7 @@
 mod jobs;
 mod platform;
 mod settings;
+mod tray;
 mod update;
 mod ytdlp;
 
@@ -12,7 +13,7 @@ use tauri::{Manager, State};
 use url2mp3_core::Id;
 
 use crate::{
-    jobs::Jobs,
+    jobs::{Jobs, Prepared, SaveItem},
     platform::{Platform, ToolsStatus},
     settings::Settings,
     update::NewVersion,
@@ -73,14 +74,41 @@ async fn update_ytdlp(jobs: JobsState<'_>, force: bool) -> Result<ToolsStatus, S
     jobs.update_ytdlp(force).await.map_err(message)
 }
 
+/// Resolve links / search phrases into the tray; rows follow as `tray` events.
 #[tauri::command]
-async fn enqueue(jobs: JobsState<'_>, inputs: Vec<String>) -> Result<usize, String> {
-    jobs.enqueue(inputs).await.map_err(message)
+async fn add(jobs: JobsState<'_>, inputs: Vec<String>) -> Result<usize, String> {
+    jobs.add(inputs).await.map_err(message)
+}
+
+/// Fetch a tray row's audio for the trim screen.
+#[tauri::command]
+async fn prepare(jobs: JobsState<'_>, id: Id) -> Result<Prepared, String> {
+    jobs.prepare(id).await.map_err(message)
+}
+
+/// The AAC preview copy of a prepared row, as raw bytes (an `ArrayBuffer` in the webview).
+#[tauri::command]
+async fn preview_audio(jobs: JobsState<'_>, id: Id) -> Result<tauri::ipc::Response, String> {
+    let bytes = jobs.preview_audio(id).await.map_err(message)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Save tray rows, whole or cut; progress follows as `engine` events.
+#[tauri::command]
+async fn save(jobs: JobsState<'_>, items: Vec<SaveItem>) -> Result<(), String> {
+    jobs.save(items).await.map_err(message)
+}
+
+/// Remove rows from the tray, stopping their work and deleting their cached audio.
+#[tauri::command]
+async fn discard(jobs: JobsState<'_>, ids: Vec<Id>) -> Result<(), String> {
+    jobs.discard(ids).await;
+    Ok(())
 }
 
 #[tauri::command]
-async fn cancel(jobs: JobsState<'_>, generation: u32, id: Id) -> Result<(), String> {
-    jobs.cancel(generation, id).await;
+async fn cancel(jobs: JobsState<'_>, id: Id) -> Result<(), String> {
+    jobs.cancel(id).await;
     Ok(())
 }
 
@@ -149,7 +177,12 @@ pub fn run() {
             let platform = Platform::new(app.handle(), paths.app_data_dir()?)?;
             #[cfg(not(target_os = "android"))]
             let platform = Platform::new(paths.app_data_dir()?)?;
-            let jobs = Jobs::new(app.handle().clone(), platform, paths.app_config_dir()?);
+            let jobs = Jobs::new(
+                app.handle().clone(),
+                platform,
+                paths.app_config_dir()?,
+                paths.app_cache_dir()?,
+            );
             app.manage(Arc::new(jobs));
             log::info!("url2mp3 {} started", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -163,7 +196,11 @@ pub fn run() {
             take_shared,
             tools_status,
             update_ytdlp,
-            enqueue,
+            add,
+            prepare,
+            preview_audio,
+            save,
+            discard,
             cancel,
             reveal,
             open_url,
