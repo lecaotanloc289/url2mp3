@@ -3,7 +3,7 @@
 
 use std::{path::Path, process::Command};
 
-use url2mp3_core::{Format, Job, Range, Tags, Tools, encode};
+use url2mp3_core::{Format, Job, PEAK_BUCKETS, Range, Tags, Tools, encode, make_preview, peaks};
 
 fn have(tool: &str) -> bool {
     Command::new(tool)
@@ -90,4 +90,40 @@ async fn trimmed_encode_keeps_only_the_kept_ranges() {
         ],
     );
     assert!(!video.is_empty(), "no attached picture stream");
+}
+
+#[tokio::test]
+async fn preview_is_aac_and_peaks_have_1200_buckets() {
+    if !have("ffmpeg") || !have("ffprobe") {
+        eprintln!("ffmpeg/ffprobe not on PATH, skipping");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (src, out) = (dir.path().join("in.opus"), dir.path().join("preview.m4a"));
+    ffmpeg(
+        &["-f", "lavfi", "-i", "sine=f=440:d=5,volume=6", "-c:a", "libopus"],
+        &src,
+    );
+
+    let tools = Tools::from_path();
+    make_preview(&tools, &src, "opus", &out).await.unwrap();
+    let codec = probe(
+        &out,
+        &[
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "csv=p=0",
+        ],
+    );
+    assert_eq!(codec, "aac");
+
+    let p = peaks(&tools, &src, PEAK_BUCKETS).await.unwrap();
+    assert_eq!(p.len(), 1200);
+    let max = p.iter().copied().fold(0.0, f32::max);
+    assert!(max > 0.5 && max <= 1.0, "max {max}");
+
+    assert!(peaks(&tools, &dir.path().join("missing.opus"), 10).await.is_err());
 }

@@ -1,7 +1,10 @@
 //! Steps 5–6: ffmpeg re-encodes (or just remuxes when the source codec already matches),
 //! embeds the cover and writes the tags in one pass.
 
-use std::{path::Path, process::Stdio};
+use std::{
+    path::Path,
+    process::{ExitStatus, Stdio},
+};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -162,8 +165,13 @@ pub async fn encode(tools: &Tools, job: Job<'_>) -> Result<()> {
         .output()
         .await
         .context("không chạy được ffmpeg")?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
+    check_ffmpeg(out.status, &out.stderr)
+}
+
+/// Turns a failed ffmpeg run into an error carrying the last stderr line.
+pub(crate) fn check_ffmpeg(status: ExitStatus, stderr: &[u8]) -> Result<()> {
+    if !status.success() {
+        let err = String::from_utf8_lossy(stderr);
         bail!("ffmpeg: {}", err.lines().last().unwrap_or("lỗi không rõ").trim());
     }
     Ok(())
