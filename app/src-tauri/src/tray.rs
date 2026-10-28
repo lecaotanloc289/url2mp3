@@ -1,5 +1,6 @@
 //! The "ready to download" tray: tracks that were resolved but not saved yet, and where each
-//! one caches its audio and preview copy (`<app cache>/tray/<id>/`).
+//! one caches its audio and preview copy (`<app cache>/tray/run-*/<id>/`, the run folder being
+//! this app instance's own).
 
 use std::{
     collections::HashMap,
@@ -121,7 +122,7 @@ mod tests {
 
     #[test]
     fn paths_live_under_the_tray_dir() {
-        let root = PathBuf::from("cache").join("tray");
+        let root = PathBuf::from("cache").join("tray").join("run-x1");
         let tray = Tray::new(root.clone());
         assert_eq!(tray.dir(7), root.join("7"));
         assert_eq!(

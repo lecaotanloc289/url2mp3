@@ -143,6 +143,10 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
         Some(p) => p,
         None => url2mp3_core::default_out_dir().context("không tìm thấy thư mục Downloads, dùng -o")?,
     };
+    // The engine only creates it on the first save: an unusable folder should stop us here.
+    tokio::fs::create_dir_all(&out)
+        .await
+        .with_context(|| format!("tạo {}", out.display()))?;
     let render = Arc::new(Render::new(cli.format, out.clone())?);
     let sink = {
         let render = render.clone();

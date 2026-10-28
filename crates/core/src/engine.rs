@@ -18,7 +18,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use futures_util::future::join_all;
 use serde::Serialize;
 use tempfile::TempDir;
-use tokio::sync::Semaphore;
+use tokio::sync::{OnceCell, Semaphore};
 
 use crate::{
     cut::{Cut, normalize},
@@ -200,7 +200,8 @@ pub struct Engine {
     ytdlp: Ytdlp,
     dl: Downloader,
     tools: Tools,
-    tmp: TempDir,
+    /// Made by the first save (see `tmp`), removed when the engine is dropped.
+    tmp: OnceCell<TempDir>,
     sem: Semaphore,
     next: AtomicU64,
     /// Names temp files; separate from `Id`, which callers may reuse.
@@ -213,22 +214,15 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Creates the output folder and a temp folder inside it (removed when the engine is
-    /// dropped), after clearing temp folders left behind by a killed run. `sink` is called from
-    /// the download tasks and must return quickly: queue the event, don't block on it.
+    /// Touches nothing on disk: the output folder is only created by the first save (see
+    /// `tmp`), so an app can resolve links and fetch audio before the user decides to save.
+    /// `sink` is called from the download tasks and must return quickly: queue the event,
+    /// don't block on it.
     pub async fn start(
         tools: Tools,
         opts: Options,
         sink: impl Fn(Event) + Send + Sync + 'static,
     ) -> Result<Arc<Self>> {
-        tokio::fs::create_dir_all(&opts.out)
-            .await
-            .with_context(|| format!("tạo {}", opts.out.display()))?;
-        sweep_stale_temp(&opts.out).await;
-        // Inside the output dir so the final rename never crosses filesystems.
-        let tmp = tempfile::Builder::new()
-            .prefix(".url2mp3-")
-            .tempdir_in(&opts.out)?;
         Ok(Arc::new(Self {
             ytdlp: Ytdlp::new(
                 tools.clone(),
@@ -239,7 +233,7 @@ impl Engine {
             ),
             dl: Downloader::new(opts.connections.max(1))?,
             tools,
-            tmp,
+            tmp: OnceCell::new(),
             sem: Semaphore::new(opts.jobs.max(1)),
             next: AtomicU64::new(0),
             scratch: AtomicU64::new(0),
@@ -507,6 +501,8 @@ impl Engine {
             }
             dest
         };
+        // Creates the output folder first, with a clear error if it can't.
+        let tmp = self.tmp().await?;
         tokio::fs::create_dir_all(dir).await?;
         self.emit(Event::Track {
             id,
@@ -516,7 +512,6 @@ impl Engine {
             thumbnail: track.thumbnail.clone(),
         });
 
-        let tmp = self.tmp.path();
         // Another url2mp3 may have swept our temp dir as stale while this engine sat idle.
         tokio::fs::create_dir_all(tmp).await?;
         let n = self.scratch.fetch_add(1, Relaxed);
@@ -632,6 +627,25 @@ impl Engine {
             }
         }
         None
+    }
+
+    /// This engine's temp folder. The first call creates the output folder, clears temp
+    /// folders left behind by a killed run and makes ours inside it, so the final rename never
+    /// crosses filesystems; a call after a failure (folder not writable…) tries again.
+    async fn tmp(&self) -> Result<&Path> {
+        let tmp = self
+            .tmp
+            .get_or_try_init(|| async {
+                let out = &self.opts.out;
+                tokio::fs::create_dir_all(out)
+                    .await
+                    .with_context(|| format!("tạo {}", out.display()))?;
+                sweep_stale_temp(out).await;
+                let tmp = tempfile::Builder::new().prefix(".url2mp3-").tempdir_in(out)?;
+                anyhow::Ok(tmp)
+            })
+            .await?;
+        Ok(tmp.path())
     }
 
     /// The output folder, or the playlist's folder inside it.
@@ -768,17 +782,22 @@ impl Progress for Throttled<'_> {
     }
 }
 
-/// Remove `.url2mp3-*` temp dirs left by a run that was killed or crashed. Only ones untouched
-/// for an hour (the dir and every file in it, which a running download keeps writing), so
-/// another url2mp3 working right now keeps its own.
+/// Remove `.url2mp3-*` temp dirs left by a run that was killed or crashed.
 async fn sweep_stale_temp(out: &Path) {
-    let Ok(mut dir) = tokio::fs::read_dir(out).await else {
+    remove_stale_dirs(out, ".url2mp3-").await;
+}
+
+/// Remove the folders in `parent` whose name starts with `prefix`, left by a run that was
+/// killed or crashed. Only ones untouched for an hour (the dir and every entry directly in it,
+/// which running work keeps writing), so another url2mp3 working right now keeps its own.
+pub async fn remove_stale_dirs(parent: &Path, prefix: &str) {
+    let Ok(mut dir) = tokio::fs::read_dir(parent).await else {
         return;
     };
     while let Ok(Some(entry)) = dir.next_entry().await {
         let is_dir = entry.file_type().await.is_ok_and(|t| t.is_dir());
         if is_dir
-            && entry.file_name().to_string_lossy().starts_with(".url2mp3-")
+            && entry.file_name().to_string_lossy().starts_with(prefix)
             && idle_for(&entry.path()).await > Duration::from_secs(3600)
         {
             let _ = tokio::fs::remove_dir_all(entry.path()).await;

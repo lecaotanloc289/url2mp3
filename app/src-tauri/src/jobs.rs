@@ -20,9 +20,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, async_runtime::JoinHandle};
-use url2mp3_core::{
-    Cut, Engine, Event, Id, Outcome, PEAK_BUCKETS, Resolved, Segment, Track, is_network_error,
-};
+use url2mp3_core::{Cut, Engine, Event, Id, PEAK_BUCKETS, Resolved, Segment, Track, is_network_error};
 
 use crate::{
     platform::{Platform, ToolsStatus},
@@ -142,12 +140,17 @@ pub struct Jobs {
 }
 
 impl Jobs {
-    /// `cache_dir`: the app's cache folder; the tray caches audio in `tray/` inside it, which
-    /// is emptied now (a killed run may have left it) and on shutdown.
+    /// `cache_dir`: the app's cache folder. This run's tray caches audio in its own
+    /// `tray/run-*/` inside it (another instance, possible on Windows, has its own), removed on
+    /// shutdown; folders of killed runs are swept once idle for an hour.
     pub fn new(app: AppHandle, platform: Platform, config_dir: PathBuf, cache_dir: PathBuf) -> Self {
         let settings_path = config_dir.join("settings.json");
-        let tray_root = cache_dir.join("tray");
-        let _ = std::fs::remove_dir_all(&tray_root);
+        let trays = cache_dir.join("tray");
+        let run = run_dir(&trays);
+        // Ours is brand new, so never idle long enough to go.
+        tauri::async_runtime::spawn(async move {
+            url2mp3_core::remove_stale_dirs(&trays, RUN_PREFIX).await;
+        });
         Self {
             app,
             client: url2mp3_core::http_client()
@@ -161,7 +164,7 @@ impl Jobs {
             next_id: AtomicU64::new(1),
             next_task: AtomicU64::new(0),
             state: Mutex::new(State {
-                tray: Tray::new(tray_root),
+                tray: Tray::new(run),
                 running: HashMap::new(),
             }),
             updating: tokio::sync::Mutex::new(()),
@@ -381,8 +384,8 @@ impl Jobs {
     /// it (the normal download otherwise). Events follow on `engine`; the row stays in the tray
     /// until discarded, so a failed one can be saved again. Saves of one row run one after the
     /// other (whole, then trimmed…); a whole save while one is running is ignored (it would
-    /// only be skipped as a duplicate). The cache goes after a save that ends `done`/`skipped`
-    /// with nothing else queued on the row.
+    /// only be skipped as a duplicate). The cache stays until the row is discarded: saving a
+    /// trimmed copy after the whole track never downloads it again.
     pub async fn save(self: &Arc<Self>, items: Vec<SaveItem>) -> Result<()> {
         let _no_update = self.no_update().await;
         let engine = self.engine().await?;
@@ -397,7 +400,7 @@ impl Jobs {
             if whole && state.running.values().any(saving_whole) {
                 continue;
             }
-            let (dir, (audio, _)) = (state.tray.dir(id), state.tray.paths(id));
+            let (audio, _) = state.tray.paths(id);
             let (jobs, engine) = (self.clone(), engine.clone());
             self.spawn(&mut state, id, Stage::Save { whole }, move |_| async move {
                 // Waits for a fetch `prepare` still runs (or an earlier save), then uses its audio.
@@ -405,22 +408,10 @@ impl Jobs {
                 // Probed by `prepare` meanwhile, maybe.
                 let track = jobs.state().tray.get(id).map_or(entry.track, |e| e.track);
                 let cached = exists(&audio).await.then_some(audio.as_path());
-                let outcome = engine
-                    .save(
-                        id,
-                        entry.parent,
-                        &track,
-                        entry.playlist.as_deref(),
-                        cached,
-                        cut.as_ref(),
-                    )
+                let playlist = entry.playlist.as_deref();
+                engine
+                    .save(id, entry.parent, &track, playlist, cached, cut.as_ref())
                     .await;
-                // This task is still registered: more than one means another waits on the cache.
-                let queued = jobs.state().running.values().filter(|t| t.id == id).count() > 1;
-                if matches!(outcome, Outcome::Done(_) | Outcome::Skipped) && !queued {
-                    // Still holding `_cache`: whatever queued after this starts on no cache.
-                    let _ = tokio::fs::remove_dir_all(&dir).await;
-                }
             });
         }
         Ok(())
@@ -468,7 +459,7 @@ impl Jobs {
     }
 
     /// Stop everything before the app exits, so no yt-dlp or ffmpeg outlives it, the engines
-    /// remove their temp folders and the tray's cache goes.
+    /// remove their temp folders and this run's tray cache goes.
     pub async fn shutdown(&self) {
         let tasks = self.state().take(|_| true);
         stop(tasks).await;
@@ -527,6 +518,23 @@ impl Jobs {
     }
 }
 
+const RUN_PREFIX: &str = "run-";
+
+/// A fresh `<trays>/run-*` folder for this run's tray. Should the cache folder be unusable,
+/// a per-process name: `prepare` then fails creating it, and saves download as usual.
+fn run_dir(trays: &std::path::Path) -> PathBuf {
+    let made = std::fs::create_dir_all(trays)
+        .and_then(|()| tempfile::Builder::new().prefix(RUN_PREFIX).tempdir_in(trays));
+    match made {
+        // Kept past the `TempDir`: `shutdown` removes it.
+        Ok(dir) => dir.keep(),
+        Err(e) => {
+            log::warn!("tray cache in {}: {e}", trays.display());
+            trays.join(format!("{RUN_PREFIX}{}", std::process::id()))
+        }
+    }
+}
+
 /// An engine event to the webview as `engine` `{ event }`.
 fn forward(app: &AppHandle, event: Event) {
     match &event {
@@ -561,6 +569,21 @@ mod tests {
     use serde_json::{from_value, json, to_value};
 
     use super::*;
+
+    /// Two app instances never share a tray cache folder.
+    #[test]
+    fn each_run_gets_its_own_tray_folder() {
+        let cache = tempfile::tempdir().unwrap();
+        let trays = cache.path().join("tray");
+        let (a, b) = (run_dir(&trays), run_dir(&trays));
+        assert_ne!(a, b);
+        for run in [&a, &b] {
+            assert!(run.is_dir());
+            assert_eq!(run.parent(), Some(trays.as_path()));
+            let name = run.file_name().unwrap().to_string_lossy();
+            assert!(name.starts_with(RUN_PREFIX), "{name}");
+        }
+    }
 
     /// The shapes the UI (`app/src`) is written against.
     #[test]

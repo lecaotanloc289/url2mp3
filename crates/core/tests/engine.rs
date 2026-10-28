@@ -158,6 +158,58 @@ async fn tools_report_versions() {
     assert!(missing.ytdlp_version().await.is_err());
 }
 
+/// The app resolves links and fetches audio into its tray long before the user saves:
+/// nothing may appear in the output folder until then.
+#[tokio::test]
+async fn start_and_resolve_do_not_touch_the_output_folder() {
+    let (bin, parent) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let out = parent.path().join("Music");
+    let (engine, _) = engine(fakes(bin.path()), &out).await;
+    let track = resolve_track(&engine, LINK).await;
+    engine
+        .fetch(1, &track, &bin.path().join("cache.audio"))
+        .await
+        .unwrap();
+    assert!(!out.exists(), "start/resolve/fetch created {}", out.display());
+
+    assert_eq!(
+        engine.save(1, None, &track, None, None, None).await,
+        Outcome::Done(5)
+    );
+    assert_eq!(fs::read(out.join("Fake Song.mp3")).unwrap(), b"audio");
+
+    drop(engine);
+    let left: Vec<_> = fs::read_dir(&out)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left, ["Fake Song.mp3"], "the temp dir goes with the engine");
+}
+
+#[tokio::test]
+async fn only_stale_folders_with_the_prefix_are_removed() {
+    let parent = tempfile::tempdir().unwrap();
+    let two_hours_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+    for name in ["run-old", "run-busy", "run-new", "other-old"] {
+        fs::create_dir(parent.path().join(name)).unwrap();
+    }
+    // "run-busy" is old itself but something inside it was just written.
+    fs::write(parent.path().join("run-busy").join("audio"), b"a").unwrap();
+    for name in ["run-old", "run-busy", "other-old"] {
+        let dir = fs::File::open(parent.path().join(name)).unwrap();
+        dir.set_modified(two_hours_ago).unwrap();
+    }
+
+    url2mp3_core::remove_stale_dirs(parent.path(), "run-").await;
+
+    let mut left: Vec<_> = fs::read_dir(parent.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    left.sort();
+    assert_eq!(left, ["other-old", "run-busy", "run-new"]);
+}
+
 #[tokio::test]
 async fn downloads_converts_and_reports_each_step() {
     let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
