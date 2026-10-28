@@ -325,32 +325,38 @@ impl Jobs {
     }
 
     async fn prepare_now(&self, engine: &Engine, id: Id, entry: Entry) -> Result<Prepared> {
-        // A second prepare or a save of this row waits here rather than fetching again.
-        let _cache = entry.cache.lock().await;
         let (dir, (audio, preview)) = {
             let state = self.state();
             (state.tray.dir(id), state.tray.paths(id))
         };
-        // Read again when the format changed since `add`, so the cache holds this format's
-        // stream (audio already cached stays as it is).
-        let stale = engine.picked_for_another_format(&entry.track) && !exists(&audio).await;
-        let track = if entry.track.needs_probe() || stale {
-            let probed = engine.reprobe(&entry.track).await?;
-            let mut state = self.state();
-            if state.tray.set_track(id, probed.clone()) {
-                self.emit_tray(TrayEvent::added(id, entry.parent, None, &probed));
+        let track = {
+            // Only while the audio is fetched: a second prepare or a save of this row waits
+            // here rather than fetching again, but a save never waits for the preview copy,
+            // peaks or SponsorBlock below (it only reads the audio, as they do).
+            let _cache = entry.cache.lock().await;
+            // Read again when the format changed since `add`, so the cache holds this format's
+            // stream (audio already cached stays as it is).
+            let stale = engine.picked_for_another_format(&entry.track) && !exists(&audio).await;
+            let track = if entry.track.needs_probe() || stale {
+                let probed = engine.reprobe(&entry.track).await?;
+                let mut state = self.state();
+                if state.tray.set_track(id, probed.clone()) {
+                    self.emit_tray(TrayEvent::added(id, entry.parent, None, &probed));
+                }
+                probed
+            } else {
+                entry.track
+            };
+            if !exists(&audio).await {
+                tokio::fs::create_dir_all(&dir).await?;
+                engine.fetch(id, &track, &audio).await?;
             }
-            probed
-        } else {
-            entry.track
+            track
         };
-        if !exists(&audio).await {
-            tokio::fs::create_dir_all(&dir).await?;
-            engine.fetch(id, &track, &audio).await?;
-        }
 
         let tools = engine.tools();
         let make_preview = async {
+            let _one_writer = entry.preview.lock().await;
             if exists(&preview).await {
                 return Ok(());
             }

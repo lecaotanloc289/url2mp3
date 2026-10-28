@@ -19,8 +19,11 @@ pub struct Entry {
     pub parent: Option<Id>,
     /// The playlist's folder name inside the output folder.
     pub playlist: Option<String>,
-    /// Held by whoever reads or writes the row's cache folder.
+    /// Held while the row's audio is fetched into its cache folder, and by a save while it
+    /// reads it: a save never starts on a half-fetched file, and never waits for more.
     pub cache: Arc<tokio::sync::Mutex<()>>,
+    /// Held while the preview copy is made, so two prepares don't write the same `.part`.
+    pub preview: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Entry {
@@ -30,6 +33,7 @@ impl Entry {
             parent,
             playlist,
             cache: Arc::default(),
+            preview: Arc::default(),
         }
     }
 }
