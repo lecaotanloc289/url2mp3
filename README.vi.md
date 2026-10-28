@@ -38,6 +38,15 @@ thì chưa có file nào được ghi vào thư mục lưu. Định dạng
 trình duyệt nằm trong Cài đặt. Giao diện tiếng Việt hoặc tiếng Anh, theo ngôn ngữ máy nếu bạn
 không chọn.
 
+- Màn cắt hiện dạng sóng âm; chọn một đoạn rồi bỏ đi, chỉnh mép ±1 giây, hoàn tác được. Với
+  YouTube, các đoạn [SponsorBlock](https://sponsor.ajay.app) đánh dấu không phải nhạc (mở đầu,
+  quảng cáo, kết…) được gợi ý, bấm "Bỏ hết" hoặc "Không". Để hỏi, app chỉ gửi 4 ký tự đầu của
+  SHA-256 của mã video, không gửi mã video hay link; không kết nối được thì đơn giản là không có
+  gợi ý.
+- Bản đã cắt lưu cạnh bài đầy đủ với tên `<tên bài> (đã cắt).<đuôi>`, rồi `(đã cắt 2)`…; không
+  bao giờ ghi đè file nào. Bài nằm trong khay thì app giữ âm thanh đã tải trong một thư mục tạm
+  (đổi định dạng hay cắt sau đó không phải tải lại) cho đến khi bạn bỏ bài khỏi khay hoặc thoát
+  app.
 - yt-dlp không đóng sẵn trong app: lần mở đầu tiên app tải bản mới nhất từ
   [GitHub của yt-dlp](https://github.com/yt-dlp/yt-dlp/releases) (~50 MB), kiểm tra với
   SHA2-256SUMS của bản đó, và mỗi ngày kiểm tra cập nhật một lần. yt-dlp nằm trong thư mục dữ
@@ -49,7 +58,7 @@ không chọn.
 - Android: mọi thứ chạy ngay trên điện thoại (không cần server). Python, yt-dlp, ffmpeg và
   QuickJS lấy từ [youtubedl-android](https://github.com/yausername/youtubedl-android); Cài đặt →
   Cập nhật sẽ tải yt-dlp mới nhất. Nhạc lưu vào `Download/url2mp3`, app nghe nhạc tự thấy. Trong
-  YouTube, TikTok hay trình duyệt, bấm *Chia sẻ → url2mp3* là tải luôn; có thông báo giữ cho việc
+  YouTube, TikTok hay trình duyệt, bấm *Chia sẻ → url2mp3* là đưa link vào khay và mở màn cắt; có thông báo giữ cho việc
   tải chạy tiếp khi bạn chuyển sang app khác.
 
 Tự build (cần Rust, Node.js, pnpm):
@@ -134,6 +143,10 @@ kiện. Lệnh `url2mp3` (`crates/cli`) vẽ các sự kiện đó ra terminal; 
 - **Chuyển định dạng** (`crates/core/src/transcode.rs`): ffmpeg chạy một lượt để nén, gắn ảnh bìa (cắt
   vuông) và ghi tag. Nếu codec nguồn trùng codec đích (Opus→`.opus`, AAC→`.m4a`, MP3 TikTok→`.mp3`)
   thì chỉ copy luồng, không nén lại.
+- **Cắt** (app dùng; lệnh terminal luôn lưu nguyên bài): `cut.rs` chuẩn hoá các đoạn giữ lại và
+  dựng đồ thị ffmpeg nối chúng (mờ dần 15 ms ở các mép nối bên trong), `preview.rs` tạo bản nghe
+  thử AAC và các đỉnh sóng âm, `sponsor.rs` hỏi SponsorBlock để gợi ý. `Engine::fetch` tải âm
+  thanh một lần; `Engine::save` nén từ đó.
 
 ## Chất lượng & tốc độ
 

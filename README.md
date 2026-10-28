@@ -40,6 +40,15 @@ all, each with its cuts. Nothing is written to the output folder before you pres
 browser cookies are in Settings. The interface is in Vietnamese or English, following the system
 unless you pick one.
 
+- The trim screen shows the waveform; select a part and remove it, nudge the edges by ±1 s, undo.
+  For YouTube, parts [SponsorBlock](https://sponsor.ajay.app) marks as non-music (intros,
+  sponsors, outros…) are suggested, with "Remove all" or "No". To ask, the app sends only the
+  first 4 characters of the SHA-256 of the video id, never the id or the link; if the service
+  can't be reached there are simply no suggestions.
+- Trimmed copies are saved next to the full track as `<title> (trimmed).<ext>`, then
+  `(trimmed 2)`…; nothing is ever overwritten. While a track sits in the tray, the app keeps its
+  downloaded audio in a temporary folder (so changing the format or trimming later doesn't
+  download it again) until you remove the row or quit.
 - yt-dlp is not bundled: on first launch the app downloads the latest release from
   [yt-dlp's GitHub](https://github.com/yt-dlp/yt-dlp/releases) (~50 MB), checks it against the
   release's SHA2-256SUMS, and updates it once a day. It lives in the app's data folder
@@ -51,7 +60,7 @@ unless you pick one.
 - Android: everything runs on the phone (no server). Python, yt-dlp, ffmpeg and QuickJS come
   from [youtubedl-android](https://github.com/yausername/youtubedl-android), and Settings →
   Update fetches the latest yt-dlp. Tracks go to `Download/url2mp3`, where music players find
-  them. In YouTube, TikTok or a browser, *Share → url2mp3* downloads the link straight away, and
+  them. In YouTube, TikTok or a browser, *Share → url2mp3* puts the link in the tray and opens its trim screen, and
   a notification keeps downloads going when you switch to another app.
 
 Build it yourself (needs Rust, Node.js and pnpm):
@@ -143,6 +152,10 @@ events. The `url2mp3` command (`crates/cli`) draws those events in the terminal;
 - **Convert** (`crates/core/src/transcode.rs`): one ffmpeg pass encodes, embeds a square-cropped cover and
   writes the tags. When the source codec already matches the target (Opus→`.opus`, AAC→`.m4a`,
   TikTok MP3→`.mp3`), the stream is copied without re-encoding.
+- **Trim** (used by the app; the CLI always saves whole tracks): `cut.rs` normalizes the kept
+  ranges and builds the ffmpeg graph that joins them (15 ms fades on inner edges only),
+  `preview.rs` makes the AAC preview copy and the waveform peaks, `sponsor.rs` asks SponsorBlock
+  for suggestions. `Engine::fetch` downloads the audio once; `Engine::save` encodes from it.
 
 ## Quality and speed
 

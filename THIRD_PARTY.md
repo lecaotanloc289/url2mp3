@@ -13,6 +13,14 @@ as separate executables under their own licences.
 | [Bricolage Grotesque](https://fontsource.org/fonts/bricolage-grotesque) | 5.3.0 (fontsource) | SIL Open Font License 1.1 | npm `@fontsource-variable/bricolage-grotesque` |
 | [Be Vietnam Pro](https://fontsource.org/fonts/be-vietnam-pro) | 5.3.0 (fontsource) | SIL Open Font License 1.1 | npm `@fontsource/be-vietnam-pro` |
 
+## Data
+
+The app's trim screen suggests parts to remove from YouTube videos using
+[SponsorBlock](https://sponsor.ajay.app) data (queried live from `sponsor.ajay.app`, never
+bundled), licensed
+[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) by Ajay Ramachandran and
+contributors. Only the first 4 characters of the SHA-256 of the video id are sent.
+
 The Android APK links youtubedl-android (GPL v3), so the APK as a whole is distributed under
 GPL v3; its complete source is this repository (url2mp3's own code stays MIT, which GPL v3
 allows).
