@@ -32,7 +32,10 @@ The apps aren't code-signed, so the first launch needs one extra step:
 
 ## App
 
-Paste links or type a song name, press Download (⌘/Ctrl + Enter), and watch the queue. Format
+Paste links or type a song name and press Add to tray (⌘/Ctrl + Enter). One link opens a trim
+screen: listen (the preview skips removed parts), remove any parts, then save the whole track or
+the trimmed one. Several links or a playlist wait in the tray; "● Download N tracks" saves them
+all, each with its cuts. Nothing is written to the output folder before you press Download. Format
 (MP3 / M4A / Opus), output folder, bitrate, tracks at once, playlist limit, cover art and
 browser cookies are in Settings. The interface is in Vietnamese or English, following the system
 unless you pick one.

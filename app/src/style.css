@@ -12,6 +12,12 @@
   --rec: #ff4b2b;
   --ok: #9be564;
   --warn: #ffcf5c;
+  /* The waveform is a dark display window in both schemes: white selection, green playhead. */
+  --screen: #120e0b;
+  --screen-line: #2e251e;
+  --cut-stripe: #ff4b2b66;
+  --cut-gap: #120e0bcc;
+  --suggest-fill: #ffb3471f;
   --shadow: 0 1px 0 #ffffff0d inset, 0 12px 30px -18px #000;
   --display: "Bricolage Grotesque Variable", "Be Vietnam Pro", serif;
   --body: "Be Vietnam Pro", system-ui, sans-serif;
@@ -171,6 +177,10 @@ body:has(.track[data-status="downloading"], .track[data-status="converting"], .t
   color: var(--rec);
 }
 
+.icon-btn.trim:hover {
+  color: var(--amber);
+}
+
 /* ── Banners ──────────────────────────────────────────── */
 
 .banners {
@@ -302,6 +312,51 @@ body:has(.track[data-status="downloading"], .track[data-status="converting"], .t
 
 .rec-btn.small {
   padding: 8px 18px;
+}
+
+.rec-btn:disabled {
+  opacity: 0.4;
+  filter: saturate(0.5);
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Secondary deck key: flat panel button, amber variant for the cut action. */
+.deck-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.deck-btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.deck-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.deck-btn.amber {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.deck-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .text-btn {
@@ -519,8 +574,47 @@ body:has(.track[data-status="downloading"], .track[data-status="converting"], .t
 }
 
 [data-status="failed"] > .meta .meter,
-[data-status="cancelled"] > .meta .meter {
+[data-status="cancelled"] > .meta .meter,
+[data-status="ready"] > .meta .meter {
   visibility: hidden;
+}
+
+/* A tray row fetching its preview shows that progress. */
+[data-status="ready"][data-preview="loading"] > .meta .meter {
+  visibility: visible;
+}
+
+.track.openable {
+  cursor: pointer;
+}
+
+.track.openable:hover {
+  border-color: #ffb34755;
+}
+
+.children .track.openable:hover {
+  border-color: transparent;
+  border-top-color: var(--line);
+  background: #ffb3470d;
+}
+
+.sub .tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #ffb34722;
+  color: var(--amber);
+  font-size: 10.5px;
+  line-height: 17px;
+}
+
+.sub .tag:empty {
+  display: none;
+}
+
+.sub .tag[data-tag="whole"] {
+  background: #9be56422;
+  color: var(--ok);
 }
 
 .hint {
@@ -595,12 +689,25 @@ body:has(.track[data-status="downloading"], .track[data-status="converting"], .t
 .foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   padding: 8px 20px 12px;
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.foot #summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.foot button {
+  flex: none;
+  white-space: nowrap;
 }
 
 .foot [hidden] {
@@ -753,6 +860,380 @@ input:focus {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* ── Trim dialog ──────────────────────────────────────── */
+
+dialog.trim {
+  width: min(680px, calc(100% - 32px));
+  overflow-y: auto;
+}
+
+.trim-body {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.trim-head {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.trim-head .thumb {
+  width: 52px;
+  height: 52px;
+}
+
+.trim-head .title {
+  font: 700 15px/1.3 var(--display);
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.trim-head .icon-btn {
+  align-self: start;
+}
+
+.trim-exists {
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.trim-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px dashed var(--amber);
+  background: var(--suggest-fill);
+  font-size: 12.5px;
+}
+
+.trim-chip[hidden],
+.trim-state[hidden] {
+  display: none;
+}
+
+.chip-text {
+  flex: 1 1 220px;
+}
+
+.chip-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.chip-btn {
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--chassis);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.chip-btn.amber {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.trim-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trim-state::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+  animation: pulse 0.9s infinite;
+}
+
+.trim-state.failed {
+  color: var(--rec);
+  user-select: text;
+}
+
+.trim-state.failed::before {
+  background: var(--rec);
+  animation: none;
+}
+
+.wave {
+  position: relative;
+  height: 104px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--screen);
+  box-shadow: 0 0 0 1px var(--screen-line) inset, 0 2px 10px -4px #000a inset;
+  cursor: crosshair;
+  /* Touch drags select instead of scrolling the sheet. */
+  touch-action: none;
+}
+
+.wave.on-edge {
+  cursor: ew-resize;
+}
+
+.wave.disabled {
+  cursor: default;
+}
+
+.wave canvas,
+.wave .layers {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.wave .layers {
+  pointer-events: none;
+}
+
+.wave.loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, #ffb34722, transparent);
+  animation: sweep 1.4s ease-in-out infinite;
+  width: 30%;
+}
+
+.layers > div {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.layers .suggest {
+  border: 1.5px dashed var(--amber);
+  border-radius: 4px;
+  background: var(--suggest-fill);
+}
+
+.layers .cut {
+  background: repeating-linear-gradient(135deg, var(--cut-stripe) 0 6px, var(--cut-gap) 6px 12px);
+  border-left: 2px solid var(--rec);
+  border-right: 2px solid var(--rec);
+}
+
+.layers .cut span {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--rec);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.layers .sel {
+  background: #ffffff1f;
+  border-left: 2px solid #fff;
+  border-right: 2px solid #fff;
+}
+
+.layers .h {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 26px;
+  margin-top: -13px;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.layers .h.start {
+  left: -6px;
+}
+
+.layers .h.end {
+  right: -6px;
+}
+
+.layers .cut .h {
+  width: 6px;
+  height: 20px;
+  margin-top: -10px;
+  background: var(--rec);
+}
+
+.layers .cut .h.start {
+  left: -4px;
+}
+
+.layers .cut .h.end {
+  right: -4px;
+}
+
+/* The edge the ±1 s keys move. */
+.layers .active-start .h.start,
+.layers .active-end .h.end {
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--amber), 0 0 10px var(--amber);
+}
+
+.wave .playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+  pointer-events: none;
+}
+
+.wave .playhead[hidden] {
+  display: none;
+}
+
+.ruler {
+  position: relative;
+  height: 14px;
+  margin: -6px 2px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ruler span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+
+.ruler span:first-child {
+  transform: none;
+}
+
+.ruler span:last-child {
+  transform: translateX(-100%);
+}
+
+.trim-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trim-tools .play {
+  min-width: 108px;
+}
+
+.play .i-pause,
+.play.playing .i-play {
+  display: none;
+}
+
+.play.playing .i-pause {
+  display: inline;
+}
+
+.play svg {
+  fill: currentColor;
+  stroke-width: 1.4;
+}
+
+.play.playing svg {
+  fill: none;
+  stroke-width: 2.6;
+}
+
+.trim-tools .nudge {
+  min-width: 44px;
+}
+
+.trim-sum,
+.trim-help {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.trim-sum b {
+  color: var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+
+.trim-help {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.trim-save {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.trim-save .rec-btn {
+  padding: 10px 18px;
+}
+
+/* Phone portrait (and the narrowest desktop window): a full-width sheet from the bottom. */
+@media (max-width: 560px) {
+  dialog.trim {
+    width: 100%;
+    max-width: 100%;
+    max-height: 94%;
+    margin: auto 0 0;
+    border-radius: 18px 18px 0 0;
+    border-bottom: 0;
+  }
+  .trim-body {
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .trim-tools .play {
+    flex: 1 1 100%;
+  }
+  .trim-tools .deck-btn.amber {
+    flex: 1 1 auto;
+  }
+  .trim-save {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+  .trim-save > * {
+    justify-content: center;
+  }
+}
+
+@media (pointer: coarse) {
+  .deck-btn {
+    min-height: 42px;
+  }
+  .wave {
+    height: 120px;
+  }
 }
 
 @media (max-width: 480px) {

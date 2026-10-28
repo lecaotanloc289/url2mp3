@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent, TrayEvent } from "./api";
 import { formatTime } from "./cut";
-import { empty, groupStats, percent, ready, reduce, saveItem, summary, type QueueState } from "./state";
+import { canOpen, empty, groupStats, lengthText, percent, ready, reduce, saveItem, summary, tag, type QueueState } from "./state";
 
 const run = (events: EngineEvent[], state: QueueState = empty()) =>
   events.reduce((s, event) => reduce(s, { kind: "engine", event }), state);
@@ -257,5 +257,89 @@ describe("tray", () => {
       cut: { keep: [{ start: 0, end: 10 }, { start: 20, end: 272 }], label: "trimmed" },
     });
     expect(saveItem({ ...cut, duration: undefined }, "trimmed").cut).toBeNull();
+  });
+});
+
+describe("tray rows in the list", () => {
+  const one = () => tray([added(0)]);
+  const segs = [
+    { start: 0, end: 28, category: "intro" },
+    { start: 245, end: 272, category: "outro" },
+  ];
+
+  it("shows the length, or the length before and after cuts", () => {
+    expect(lengthText(one().rows["0"])).toBe("4:32");
+    const cut = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 0, end: 28 }, { start: 98, end: 128 }, { start: 245, end: 272 }], duration: 272 });
+    expect(lengthText(cut.rows["0"])).toBe("4:32 → 3:07");
+    expect(lengthText(tray([added(0, { duration: null })]).rows["0"])).toBe("–:––");
+  });
+
+  it("rounds the kept length instead of truncating float sums", () => {
+    const s = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 0, end: 28.004 }, { start: 245.003, end: 272 }], duration: 272 });
+    // kept = 216.999…: truncating would show 3:36
+    expect(lengthText(s.rows["0"])).toBe("4:32 → 3:37");
+  });
+
+  it("tags: whole, then suggested once prepare found parts, then removed", () => {
+    let s = one();
+    expect(tag(s.rows["0"])).toEqual({ kind: "whole" });
+    s = reduce(s, { kind: "suggestions", key: "0", segments: segs });
+    expect(tag(s.rows["0"])).toEqual({ kind: "suggested", secs: 55 });
+    s = reduce(s, { kind: "cut", key: "0", removed: [{ start: 0, end: 28 }], duration: 272 });
+    expect(tag(s.rows["0"])).toEqual({ kind: "removed", n: 1 });
+  });
+
+  it("suggestions are stored once; handling them clears them for good", () => {
+    let s = reduce(one(), { kind: "suggestions", key: "0", segments: segs });
+    s = reduce(s, { kind: "suggestionsHandled", key: "0" });
+    expect(s.rows["0"].suggested).toEqual([]);
+    s = reduce(s, { kind: "suggestions", key: "0", segments: segs });
+    expect(s.rows["0"].suggested).toEqual([]);
+    expect(tag(s.rows["0"])).toEqual({ kind: "whole" });
+  });
+
+  it("a rejected save puts the rows back to failed with the message", () => {
+    let s = reduce(one(), { kind: "saving", keys: ["0"] });
+    s = reduce(s, { kind: "saveFailed", keys: ["0", "9"], message: "engine gone" });
+    expect(s.rows["0"]).toMatchObject({ status: "failed", message: "engine gone", network: false, saved: true });
+    expect(s.rows["9"]).toBeUndefined();
+  });
+
+  it("a whole save is retried whole even when the row has cuts", () => {
+    let s = reduce(one(), { kind: "cut", key: "0", removed: [{ start: 0, end: 28 }], duration: 272 });
+    s = reduce(s, { kind: "saving", keys: ["0"], whole: true });
+    expect(saveItem(s.rows["0"], "trimmed").cut).toBeNull();
+    s = run([{ kind: "failed", id: 0, parent: null, label: "x", message: "m", network: false }], s);
+    s = reduce(s, { kind: "saving", keys: ["0"] });
+    expect(saveItem(s.rows["0"], "trimmed").cut).not.toBeNull();
+  });
+
+  it("a saved row that finished can be opened and saved again", () => {
+    let s = one();
+    expect(canOpen(s.rows["0"])).toBe(true);
+    s = reduce(s, { kind: "saving", keys: ["0"] });
+    expect(canOpen(s.rows["0"])).toBe(false);
+    s = run([{ kind: "done", id: 0, path: "/m/Song.mp3", bytes: 9, secs: 1 }], s);
+    expect(canOpen(s.rows["0"])).toBe(true);
+    s = reduce(s, { kind: "saving", keys: ["0"] });
+    expect(s.rows["0"].status).toBe("downloading");
+    // A row that never came through the tray has no cache to open.
+    const plain = run([{ kind: "probing", id: 5, parent: null, label: "x" }, { kind: "done", id: 5, path: "/x", bytes: 1, secs: 1 }]);
+    expect(canOpen(plain.rows["5"])).toBe(false);
+  });
+
+  it("removing a playlist track drops it from its group; the last one takes the group", () => {
+    let s = tray([
+      { kind: "playlist", id: 0, input: "p", title: "Chill", count: 2 },
+      added(1, { parent: 0, input: null }),
+      added(2, { parent: 0, input: null }),
+    ]);
+    s = reduce(s, { kind: "remove", key: "1" });
+    expect(s.rows["1"]).toBeUndefined();
+    expect(s.groups["0"]).toMatchObject({ children: ["2"], count: 1 });
+    expect(ready(s)).toEqual(["2"]);
+    s = reduce(s, { kind: "remove", key: "2" });
+    expect(s.groups["0"]).toBeUndefined();
+    expect(s.order).toEqual([]);
   });
 });

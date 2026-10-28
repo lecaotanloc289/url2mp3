@@ -1,5 +1,7 @@
 // Runs the UI in a plain browser with a fake backend, for looking at layouts without Tauri:
 // `pnpm dev`, then open http://localhost:1420/dev/mock.html (add `#open` to expand playlists).
+// Inputs containing "playlist" give a 3-track playlist; "noduration" a track yt-dlp reports no
+// length for; "fail" a track whose first preview fails.
 
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -26,6 +28,8 @@ const tray = (event: TrayEvent) => emit("tray", event);
 let nextId = 0;
 const titles = new Map<number, string>();
 const parents = new Map<number, number>();
+const noDuration = new Set<number>();
+const failOnce = new Set<number>();
 
 /** A 272 s mono 8 kHz quiet sine (WAV), built once. The real backend returns AAC in MP4. */
 let wav: ArrayBuffer | undefined;
@@ -78,7 +82,10 @@ async function add(inputs: string[]): Promise<number> {
       } else {
         const title = "LẠC TRÔI | OFFICIAL MUSIC VIDEO | SƠN TÙNG M-TP";
         titles.set(id, title);
-        await tray({ kind: "added", id, parent: null, input, title, artist: "Sơn Tùng M-TP Official", thumbnail: thumb, duration: DURATION, youtube: true });
+        if (input.includes("noduration")) noDuration.add(id);
+        if (input.includes("fail")) failOnce.add(id);
+        const duration = noDuration.has(id) ? null : DURATION;
+        await tray({ kind: "added", id, parent: null, input, title, artist: "Sơn Tùng M-TP Official", thumbnail: thumb, duration, youtube: true });
       }
     }
   })();
@@ -94,14 +101,16 @@ async function prepare(id: number): Promise<Prepared> {
     await engine({ kind: "progress", id, done: i * 100_000, total: 400_000 });
     await sleep(120);
   }
+  if (failOnce.delete(id)) throw "fetch: HTTP Error 403: Forbidden";
   return {
-    duration: DURATION,
+    duration: noDuration.has(id) ? null : DURATION,
     peaks: peaks(),
+    // The spec's example: 0:00–0:28 intro, 4:05–4:32 outro → 3:37 kept.
     suggestions: [
-      { start: 0, end: 14, category: "intro" },
-      { start: 236, end: 272, category: "outro" },
+      { start: 0, end: 28, category: "intro" },
+      { start: 245, end: 272, category: "outro" },
     ],
-    exists: false,
+    exists: id === 0,
   };
 }
 

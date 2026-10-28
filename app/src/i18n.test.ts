@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dictionaries, hint, pickLanguage, setLanguage, t } from "./i18n";
+import { category, dictionaries, hint, pickLanguage, setLanguage, t } from "./i18n";
 
 describe("i18n", () => {
   it("both languages have the same keys", () => {
@@ -18,6 +18,16 @@ describe("i18n", () => {
     expect(t("status.converting", { ext: "mp3" })).toBe("Converting to mp3…");
     setLanguage("vi");
     expect(t("playlistCount", { finished: 2, count: 5 })).toBe("2/5 bài");
+  });
+
+  it("names SponsorBlock categories, unknown ones as sent", () => {
+    setLanguage("en");
+    expect(category("intro")).toBe("intro");
+    expect(category("music_offtopic")).toBe("non-music");
+    expect(category("filler")).toBe("filler");
+    setLanguage("vi");
+    expect(category("outro")).toBe("kết thúc");
+    expect(t("tag.removed", { n: 2 })).toBe("Đã bỏ 2 đoạn");
   });
 
   it("explains common failures", () => {

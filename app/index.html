@@ -32,7 +32,7 @@
       <div class="input-actions">
         <span class="kbd desktop-only" data-i18n="shortcut"></span>
         <button type="button" class="rec-btn" id="go">
-          <span class="dot" aria-hidden="true"></span><span data-i18n="download"></span>
+          <span class="dot" aria-hidden="true"></span><span data-i18n="add"></span>
         </button>
       </div>
     </section>
@@ -49,9 +49,73 @@
     <footer class="foot">
       <span id="summary"></span>
       <button type="button" class="text-btn" id="clear" data-i18n="clearFinished"></button>
+      <button type="button" class="rec-btn small" id="save-all" hidden></button>
     </footer>
 
     <div id="toast" class="toast" role="status"></div>
+
+    <dialog id="trim" class="trim">
+      <div class="trim-body">
+        <header class="trim-head">
+          <div class="thumb"><img alt="" referrerpolicy="no-referrer" /></div>
+          <div class="meta">
+            <div class="title" id="trim-title"></div>
+            <div class="sub"><span class="artist" id="trim-artist"></span><span class="status" id="trim-length"></span></div>
+          </div>
+          <button type="button" class="icon-btn" id="trim-close" data-i18n-title="trim.close">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </header>
+
+        <p class="trim-exists" id="trim-exists" data-i18n="trim.exists" hidden></p>
+
+        <div class="trim-chip" id="trim-chip" hidden>
+          <span class="chip-text" id="trim-chip-text"></span>
+          <span class="chip-actions">
+            <button type="button" class="chip-btn amber" id="trim-accept" data-i18n="trim.acceptAll"></button>
+            <button type="button" class="chip-btn" id="trim-dismiss" data-i18n="trim.dismiss"></button>
+          </span>
+        </div>
+
+        <div class="trim-state" id="trim-state" hidden>
+          <span id="trim-state-text"></span>
+          <button type="button" class="text-btn" id="trim-retry" data-i18n="trim.retry" hidden></button>
+        </div>
+
+        <div class="wave" id="trim-wave">
+          <canvas></canvas>
+          <div class="layers" id="trim-layers"></div>
+          <div class="playhead" id="trim-playhead" hidden></div>
+        </div>
+        <div class="ruler" id="trim-ruler"></div>
+
+        <div class="trim-tools">
+          <button type="button" class="deck-btn play" id="trim-play" disabled>
+            <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z" /></svg>
+            <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" /></svg>
+            <span id="trim-play-text" data-i18n="trim.play"></span>
+          </button>
+          <button type="button" class="deck-btn nudge" id="trim-back" data-i18n-title="trim.back" disabled>−1s</button>
+          <button type="button" class="deck-btn nudge" id="trim-forward" data-i18n-title="trim.forward" disabled>+1s</button>
+          <button type="button" class="deck-btn amber" id="trim-remove" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M8.6 7.6L20 18M8.6 16.4L20 6" /></svg>
+            <span data-i18n="trim.remove"></span><span class="range" id="trim-sel"></span>
+          </button>
+          <button type="button" class="deck-btn" id="trim-undo" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3" /></svg>
+            <span data-i18n="trim.undo"></span>
+          </button>
+        </div>
+
+        <p class="trim-sum"><b id="trim-kept"></b> <span data-i18n="trim.skips"></span></p>
+        <p class="trim-help" data-i18n="trim.help"></p>
+
+        <div class="trim-save">
+          <button type="button" class="deck-btn" id="trim-save-whole"></button>
+          <button type="button" class="rec-btn" id="trim-save-cut" disabled></button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="settings">
       <form method="dialog" id="settings-form">

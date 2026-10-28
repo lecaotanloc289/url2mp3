@@ -2,8 +2,8 @@
 // Rows and playlist groups are keyed by `String(id)`; the backend never reuses an id.
 // A link first becomes a `ready` row (the tray); only an explicit Download turns it into a save.
 
-import type { EngineEvent, SaveItem, TrayEvent } from "./api";
-import { kept, normalize, type Range } from "./cut";
+import type { EngineEvent, SaveItem, Segment, TrayEvent } from "./api";
+import { formatTime, kept, keptLength, normalize, type Range } from "./cut";
 
 export type Status =
   | "probing"
@@ -40,6 +40,13 @@ export interface Row {
   removed: Range[];
   /** Set once the row was saved from the tray: Retry then saves it again instead of re-adding. */
   saved?: boolean;
+  /** The last save was "Download whole track": Retry saves it whole again, cuts or not. */
+  whole?: boolean;
+  /**
+   * SponsorBlock parts `prepare` found and the user has not answered yet; undefined until the
+   * first `prepare`, empty once accepted or dismissed (they are not offered again).
+   */
+  suggested?: Segment[];
   /** Progress of the trim preview (fetch + encode) while the row is ready. */
   preview?: { phase: "loading" | "ready" | "failed"; done: number; total: number; message?: string };
 }
@@ -66,7 +73,14 @@ export type Msg =
   | { kind: "tray"; event: TrayEvent }
   | { kind: "cut"; key: string; removed: Range[]; duration?: number }
   | { kind: "preview"; key: string; phase: "loading" | "ready" | "failed"; message?: string }
-  | { kind: "saving"; keys: string[] }
+  /** Download was pressed for these rows; `whole` when saved as "Download whole track". */
+  | { kind: "saving"; keys: string[]; whole?: boolean }
+  /** `api.save` itself rejected: nothing runs for these rows. */
+  | { kind: "saveFailed"; keys: string[]; message: string }
+  /** What `prepare` found; kept only if the row has none yet. */
+  | { kind: "suggestions"; key: string; segments: Segment[] }
+  /** The user accepted or dismissed the suggestions. */
+  | { kind: "suggestionsHandled"; key: string }
   | { kind: "remove"; key: string }
   | { kind: "clearFinished" };
 
@@ -95,8 +109,33 @@ export function ready(state: QueueState): string[] {
  */
 export function saveItem(row: Row, label: string): SaveItem {
   const duration = row.duration;
-  if (duration === undefined || normalize(row.removed, duration).length === 0) return { id: row.id, cut: null };
+  if (row.whole || duration === undefined || normalize(row.removed, duration).length === 0) return { id: row.id, cut: null };
   return { id: row.id, cut: { keep: kept(row.removed, duration), label } };
+}
+
+/** The trim dialog opens on a tray row, and again on a saved one (its cache stays until removed). */
+export function canOpen(row: Row): boolean {
+  return row.status === "ready" || (!!row.saved && isFinished(row.status));
+}
+
+/** A tray row's length: `4:32`, `4:32 → 3:07` after cuts, `–:––` when unknown. */
+export function lengthText(row: Row): string {
+  const d = row.duration;
+  if (d === undefined) return formatTime(NaN);
+  if (normalize(row.removed, d).length === 0) return formatTime(d);
+  return `${formatTime(d)} → ${formatTime(Math.round(keptLength(row.removed, d)))}`;
+}
+
+export type Tag = { kind: "whole" } | { kind: "removed"; n: number } | { kind: "suggested"; secs: number };
+
+/** What a tray row says about its cuts: removed parts win over open suggestions. */
+export function tag(row: Row): Tag {
+  const d = row.duration;
+  const removed = d === undefined ? row.removed : normalize(row.removed, d);
+  if (removed.length) return { kind: "removed", n: removed.length };
+  const suggested = d === undefined ? (row.suggested ?? []) : normalize(row.suggested ?? [], d);
+  const secs = Math.round(suggested.reduce((sum, r) => sum + (r.end - r.start), 0));
+  return secs > 0 ? { kind: "suggested", secs } : { kind: "whole" };
 }
 
 export function percent(row: Row): number {
@@ -139,14 +178,30 @@ export function reduce(state: QueueState, msg: Msg): QueueState {
       let next = state;
       for (const key of msg.keys) {
         next = update(next, key, (r) =>
-          r.status === "ready" || (r.saved && (r.status === "failed" || r.status === "cancelled"))
-            ? { ...r, status: "downloading", done: 0, total: 0, message: undefined, saved: true } : r,
+          canOpen(r)
+            ? { ...r, status: "downloading", done: 0, total: 0, message: undefined, saved: true, whole: !!msg.whole }
+            : r,
         );
       }
       return next;
     }
-    case "remove":
-      return removeTop(state, msg.key);
+    case "saveFailed": {
+      let next = state;
+      for (const key of msg.keys) {
+        next = update(next, key, (r) =>
+          isFinished(r.status) || r.status === "ready" ? r : { ...r, status: "failed", message: msg.message, network: false },
+        );
+      }
+      return next;
+    }
+    case "suggestions":
+      return update(state, msg.key, (r) => (r.suggested ? r : { ...r, suggested: msg.segments }));
+    case "suggestionsHandled":
+      return update(state, msg.key, (r) => ({ ...r, suggested: [] }));
+    case "remove": {
+      const parent = state.rows[msg.key]?.parent;
+      return parent ? removeChild(state, parent, msg.key) : removeTop(state, msg.key);
+    }
     case "clearFinished": {
       let next = state;
       for (const key of state.order) {
@@ -293,6 +348,18 @@ function putRow(state: QueueState, row: Row): QueueState {
 function update(state: QueueState, key: string, fn: (r: Row) => Row): QueueState {
   const row = state.rows[key];
   return row ? putRow(state, fn(row)) : state;
+}
+
+/** A playlist track taken out of the tray: the group shrinks, and goes with its last track. */
+function removeChild(state: QueueState, groupKey: string, key: string): QueueState {
+  const group = state.groups[groupKey];
+  if (!group) return state;
+  const children = group.children.filter((k) => k !== key);
+  if (!children.length) return removeTop(state, groupKey);
+  const rows = { ...state.rows };
+  delete rows[key];
+  const count = Math.max(children.length, group.count - 1);
+  return { ...state, rows, groups: { ...state.groups, [groupKey]: { ...group, children, count } } };
 }
 
 function removeTop(state: QueueState, key: string): QueueState {
