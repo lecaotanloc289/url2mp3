@@ -30,7 +30,10 @@ pub fn normalize(keep: &[Range]) -> Vec<Range> {
     let mut ranges: Vec<Range> = keep
         .iter()
         .filter(|r| r.start.is_finite() && r.end.is_finite())
-        .map(|r| Range { start: r.start.max(0.0), end: r.end })
+        .map(|r| Range {
+            start: r.start.max(0.0),
+            end: r.end,
+        })
         .filter(|r| r.end - r.start >= MIN_LEN)
         .collect();
     ranges.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -79,7 +82,13 @@ mod tests {
     fn normalize_sorts_merges_and_drops_slivers() {
         let r = |start, end| Range { start, end };
         assert_eq!(
-            normalize(&[r(10.0, 20.0), r(-3.0, 4.0), r(18.0, 25.0), r(30.0, 30.02), r(f64::NAN, 1.0)]),
+            normalize(&[
+                r(10.0, 20.0),
+                r(-3.0, 4.0),
+                r(18.0, 25.0),
+                r(30.0, 30.02),
+                r(f64::NAN, 1.0)
+            ]),
             vec![r(0.0, 4.0), r(10.0, 25.0)]
         );
         assert_eq!(normalize(&[r(5.0, 6.0), r(6.005, 9.0)]), vec![r(5.0, 9.0)]);

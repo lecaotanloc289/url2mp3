@@ -233,7 +233,10 @@ mod tests {
         let entries = info.entries.unwrap();
         assert!(entries[0].as_ref().unwrap().is_reference());
         assert_eq!(entries[0].as_ref().unwrap().duration, Some(272.4));
-        assert_eq!(entries[0].as_ref().unwrap().extractor_key.as_deref(), Some("Youtube"));
+        assert_eq!(
+            entries[0].as_ref().unwrap().extractor_key.as_deref(),
+            Some("Youtube")
+        );
         assert!(entries[1].is_none());
     }
 

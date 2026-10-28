@@ -6,7 +6,10 @@ use std::{path::Path, process::Command};
 use url2mp3_core::{Format, Job, Range, Tags, Tools, encode};
 
 fn have(tool: &str) -> bool {
-    Command::new(tool).arg("-version").output().is_ok_and(|o| o.status.success())
+    Command::new(tool)
+        .arg("-version")
+        .output()
+        .is_ok_and(|o| o.status.success())
 }
 
 fn ffmpeg(args: &[&str], out: &Path) {
@@ -36,11 +39,24 @@ async fn trimmed_encode_keeps_only_the_kept_ranges() {
         return;
     }
     let dir = tempfile::tempdir().unwrap();
-    let (src, cover, out) = (dir.path().join("in.opus"), dir.path().join("c.jpg"), dir.path().join("out.mp3"));
+    let (src, cover, out) = (
+        dir.path().join("in.opus"),
+        dir.path().join("c.jpg"),
+        dir.path().join("out.mp3"),
+    );
     ffmpeg(&["-f", "lavfi", "-i", "sine=f=440:d=10", "-c:a", "libopus"], &src);
-    ffmpeg(&["-f", "lavfi", "-i", "testsrc=s=64x48:d=1", "-frames:v", "1"], &cover);
+    ffmpeg(
+        &["-f", "lavfi", "-i", "testsrc=s=64x48:d=1", "-frames:v", "1"],
+        &cover,
+    );
 
-    let keep = [Range { start: 1.0, end: 3.0 }, Range { start: 6.0, end: 10.0 }];
+    let keep = [
+        Range { start: 1.0, end: 3.0 },
+        Range {
+            start: 6.0,
+            end: 10.0,
+        },
+    ];
     let job = Job {
         input: &src,
         cover: Some(&cover),
@@ -48,7 +64,12 @@ async fn trimmed_encode_keeps_only_the_kept_ranges() {
         format: Format::Mp3,
         src_codec: "opus",
         bitrate: None,
-        tags: Tags { title: "t", artist: None, album: None, comment: None },
+        tags: Tags {
+            title: "t",
+            artist: None,
+            album: None,
+            comment: None,
+        },
         keep: Some(&keep),
     };
     encode(&Tools::from_path(), job).await.unwrap();
@@ -57,6 +78,16 @@ async fn trimmed_encode_keeps_only_the_kept_ranges() {
         .parse()
         .unwrap();
     assert!((5.95..=6.10).contains(&duration), "duration {duration}");
-    let video = probe(&out, &["-select_streams", "v", "-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
+    let video = probe(
+        &out,
+        &[
+            "-select_streams",
+            "v",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "csv=p=0",
+        ],
+    );
     assert!(!video.is_empty(), "no attached picture stream");
 }

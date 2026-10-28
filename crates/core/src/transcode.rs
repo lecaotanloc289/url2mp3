@@ -6,7 +6,10 @@ use std::{path::Path, process::Stdio};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::{cut::{Range, filter_graph}, tools::Tools};
+use crate::{
+    cut::{Range, filter_graph},
+    tools::Tools,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -87,7 +90,10 @@ pub async fn encode(tools: &Tools, job: Job<'_>) -> Result<()> {
         cmd.arg("-i").arg(cover);
     }
     match job.keep {
-        Some(keep) => cmd.arg("-filter_complex").arg(filter_graph(keep)).args(["-map", "[out]"]),
+        Some(keep) => cmd
+            .arg("-filter_complex")
+            .arg(filter_graph(keep))
+            .args(["-map", "[out]"]),
         None => cmd.args(["-map", "0:a:0"]),
     };
     cmd.args(["-map_metadata", "-1"]);
