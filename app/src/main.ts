@@ -355,7 +355,9 @@ async function submit() {
   const box = $<HTMLTextAreaElement>("#input");
   const inputs = box.value.split("\n").map((s) => s.trim()).filter(Boolean);
   if (await addInputs([...new Set(inputs)])) box.value = "";
-  if (!trimKey()) box.focus();
+  // Not when the trim dialog is open or about to open by itself (`pendingOpen`), nor on
+  // Android at all: the soft keyboard would come up over the dialog.
+  if (!android && pendingOpen === null && !trimKey()) box.focus();
 }
 
 let toastTimer = 0;
