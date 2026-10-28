@@ -136,9 +136,15 @@ pub struct Jobs {
     /// Task numbers, so a task that ends removes its own entry and no other.
     next_task: AtomicU64,
     state: Mutex<State>,
+    /// Prepares fetching and decoding at once (rows opened one after another keep going in
+    /// the background); separate from the engine's job permits, which bound saves.
+    prepares: tokio::sync::Semaphore,
     /// One yt-dlp download at a time.
     updating: tokio::sync::Mutex<()>,
 }
+
+/// See `Jobs::prepares`.
+const PREPARES: usize = 2;
 
 impl Jobs {
     /// `cache_dir`: the app's cache folder. This run's tray caches audio in its own
@@ -168,6 +174,7 @@ impl Jobs {
                 tray: Tray::new(run),
                 running: HashMap::new(),
             }),
+            prepares: tokio::sync::Semaphore::new(PREPARES),
             updating: tokio::sync::Mutex::new(()),
         }
     }
@@ -307,6 +314,7 @@ impl Jobs {
     /// Fetch a row's audio (unless cached) for listening and cutting: its preview copy, peaks,
     /// suggestions and whether the whole track is already saved. Progress goes on `engine`;
     /// a failure only comes back here (the row stays in the tray and can still be saved).
+    /// At most `PREPARES` rows are prepared at once; the others wait their turn.
     pub async fn prepare(self: &Arc<Self>, id: Id) -> Result<Prepared> {
         let done = {
             let _no_update = self.no_update().await;
@@ -325,6 +333,8 @@ impl Jobs {
     }
 
     async fn prepare_now(&self, engine: &Engine, id: Id, entry: Entry) -> Result<Prepared> {
+        // Taken before the cache lock, so a prepare waiting for its turn never holds up a save.
+        let _turn = self.prepares.acquire().await.context("cancelled")?;
         let (dir, (audio, preview)) = {
             let state = self.state();
             (state.tray.dir(id), state.tray.paths(id))
