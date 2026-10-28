@@ -11,7 +11,7 @@ use std::{
     future::Future,
     path::PathBuf,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicU64, Ordering::Relaxed},
     },
 };
@@ -502,8 +502,14 @@ impl Jobs {
         let work = work(no);
         let jobs = self.clone();
         let handle = tauri::async_runtime::spawn(async move {
+            // Made inside the task, so it only ever runs on the task's own thread, never under
+            // the caller's lock. Also runs if `work` panics: a dead task must not stay
+            // "running" (it would block yt-dlp updates on Android, and be cancelled forever).
+            let _deregister = OnDrop(Some(move || {
+                let mut state = jobs.state.lock().unwrap_or_else(PoisonError::into_inner);
+                state.running.remove(&no);
+            }));
             work.await;
-            jobs.state().running.remove(&no);
         });
         state.running.insert(no, Task { id, stage, handle });
     }
@@ -587,6 +593,17 @@ async fn exists(path: &std::path::Path) -> bool {
     tokio::fs::try_exists(path).await.unwrap_or(false)
 }
 
+/// Runs its closure when dropped: when a task ends, panics or is aborted.
+struct OnDrop<F: FnOnce()>(Option<F>);
+
+impl<F: FnOnce()> Drop for OnDrop<F> {
+    fn drop(&mut self) {
+        if let Some(f) = self.0.take() {
+            f();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{from_value, json, to_value};
@@ -606,6 +623,32 @@ mod tests {
             let name = run.file_name().unwrap().to_string_lossy();
             assert!(name.starts_with(RUN_PREFIX), "{name}");
         }
+    }
+
+    /// What `spawn` relies on to remove a task's `running` entry however the task ends.
+    #[tokio::test]
+    async fn on_drop_runs_when_a_task_panics_or_is_aborted() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let ran = Arc::new(AtomicUsize::new(0));
+        let guarded = |ran: Arc<AtomicUsize>| OnDrop(Some(move || _ = ran.fetch_add(1, SeqCst)));
+
+        let guard = guarded(ran.clone());
+        let panicked = tokio::spawn(async move {
+            let _guard = guard;
+            panic!("boom");
+        });
+        assert!(panicked.await.unwrap_err().is_panic());
+        assert_eq!(ran.load(SeqCst), 1);
+
+        let guard = guarded(ran.clone());
+        let stuck = tokio::spawn(async move {
+            let _guard = guard;
+            std::future::pending::<()>().await;
+        });
+        tokio::task::yield_now().await;
+        stuck.abort();
+        assert!(stuck.await.unwrap_err().is_cancelled());
+        assert_eq!(ran.load(SeqCst), 2);
     }
 
     /// The shapes the UI (`app/src`) is written against.
