@@ -177,6 +177,13 @@ impl Track {
     pub fn codec(&self) -> &str {
         self.info.acodec.as_deref().unwrap_or("")
     }
+
+    /// A probed track with only a title, for tests of code that stores tracks.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn for_tests(title: &str) -> Self {
+        let info = serde_json::from_value(serde_json::json!({ "title": title })).expect("Info from a title");
+        Self::new(info)
+    }
 }
 
 #[derive(Clone)]
@@ -245,6 +252,11 @@ impl Engine {
     /// A fresh id to pass to `process`.
     pub fn next_id(&self) -> Id {
         self.next.fetch_add(1, Relaxed)
+    }
+
+    /// The programs this engine runs, for the preview copy and peaks of a fetched track.
+    pub fn tools(&self) -> &Tools {
+        &self.tools
     }
 
     /// A link, playlist or search query → one or more tracks. Dropping the future (or aborting

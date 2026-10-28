@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 pub use cut::{Cut, Range, normalize};
 pub use engine::{Engine, Event, Id, Options, Outcome, Resolved, Skip, Track};
+pub use names::is_network_error;
 pub use preview::{PEAK_BUCKETS, make_preview, peaks};
 pub use sponsor::{Segment, suggestions};
 pub use tools::{Tools, command};

@@ -2,8 +2,9 @@
 
 use std::path::Path;
 
-/// DNS/connection trouble on the user's side, not a YouTube change.
-pub(crate) fn is_network_error(msg: &str) -> bool {
+/// DNS/connection trouble on the user's side, not a YouTube change. Public so the apps can
+/// classify errors they report themselves the way `Event::Failed { network, .. }` does.
+pub fn is_network_error(msg: &str) -> bool {
     const SIGNS: [&str; 7] = [
         "dns error",
         "failed to resolve",

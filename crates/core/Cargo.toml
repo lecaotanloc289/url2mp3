@@ -9,6 +9,8 @@ repository.workspace = true
 [features]
 # clap::ValueEnum for Format, used by the CLI.
 clap = ["dep:clap"]
+# `Track::for_tests`, for the app's unit tests.
+test-util = []
 
 [dependencies]
 anyhow.workspace = true
