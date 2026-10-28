@@ -382,6 +382,7 @@ impl Engine {
                 album: info.album.as_deref(),
                 comment: info.webpage_url.as_deref(),
             },
+            keep: None,
         };
         let mut encoded_ok = transcode::encode(&self.tools, job(has_cover)).await;
         if encoded_ok.is_err() && has_cover {

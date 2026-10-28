@@ -6,7 +6,7 @@ use std::{path::Path, process::Stdio};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::tools::Tools;
+use crate::{cut::{Range, filter_graph}, tools::Tools};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,6 +75,8 @@ pub struct Job<'a> {
     pub src_codec: &'a str,
     pub bitrate: Option<u32>,
     pub tags: Tags<'a>,
+    /// Ranges to keep (already normalized); `None` converts the whole track.
+    pub keep: Option<&'a [Range]>,
 }
 
 pub async fn encode(tools: &Tools, job: Job<'_>) -> Result<()> {
@@ -84,7 +86,11 @@ pub async fn encode(tools: &Tools, job: Job<'_>) -> Result<()> {
     if let Some(cover) = job.cover {
         cmd.arg("-i").arg(cover);
     }
-    cmd.args(["-map", "0:a:0", "-map_metadata", "-1"]);
+    match job.keep {
+        Some(keep) => cmd.arg("-filter_complex").arg(filter_graph(keep)).args(["-map", "[out]"]),
+        None => cmd.args(["-map", "0:a:0"]),
+    };
+    cmd.args(["-map_metadata", "-1"]);
 
     if job.cover.is_some() {
         // Square, centre-cropped cover: what music players expect.
@@ -108,7 +114,8 @@ pub async fn encode(tools: &Tools, job: Job<'_>) -> Result<()> {
         }
     }
 
-    if job.format.can_copy(job.src_codec) {
+    // A trimmed track is always re-encoded: the cut happens in the filter graph.
+    if job.keep.is_none() && job.format.can_copy(job.src_codec) {
         cmd.args(["-c:a", "copy"]);
     } else {
         match (job.format, job.bitrate) {

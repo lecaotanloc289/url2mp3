@@ -1,6 +1,7 @@
 //! url2mp3's engine: yt-dlp resolves a link, our own downloader fetches the audio over parallel
 //! connections, ffmpeg converts and tags it. Used by the `url2mp3` CLI and the apps.
 
+mod cut;
 mod download;
 mod engine;
 mod names;
@@ -10,9 +11,13 @@ mod transcode;
 
 use std::path::PathBuf;
 
+pub use cut::{Cut, Range, normalize};
 pub use engine::{Engine, Event, Id, Options, Outcome, Skip};
 pub use tools::{Tools, command};
 pub use transcode::Format;
+/// Exposed for the real-ffmpeg integration test only.
+#[doc(hidden)]
+pub use transcode::{Job, Tags, encode};
 
 /// `~/Downloads`, the default output folder.
 pub fn default_out_dir() -> Option<PathBuf> {
