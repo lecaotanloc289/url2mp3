@@ -178,6 +178,7 @@ function watchAudio(s: Session) {
     render();
   });
   a.addEventListener("play", () => live(s) && (loop(s), render()));
+  a.addEventListener("timeupdate", () => live(s) && !a.paused && skipRemoved(s));
   a.addEventListener("pause", () => live(s) && render());
   a.addEventListener("ended", () => live(s) && render());
   a.addEventListener("error", () => {
@@ -267,15 +268,24 @@ function toggle(s: Session) {
   if (to !== "end") void a.play().catch((e) => fail(s, String(e)));
 }
 
+/** Jump over a removed part under the playhead, or stop when only removed audio is left. */
+function skipRemoved(s: Session) {
+  if (s.duration === undefined) return;
+  const to = playFrom(s.audio.currentTime, normalize(s.removed, s.duration), s.duration);
+  if (to === "end") s.audio.pause();
+  else if (to !== null) s.audio.currentTime = to;
+}
+
+/**
+ * Checks every frame while the window is drawn. A hidden or minimised window (or Android app
+ * in the background) gets no frames but keeps playing: `timeupdate` (see `watchAudio`) skips
+ * there, a few times a second.
+ */
 function loop(s: Session) {
   cancelAnimationFrame(s.raf);
   const tick = () => {
     if (!live(s) || s.audio.paused) return;
-    if (s.duration !== undefined) {
-      const to = playFrom(s.audio.currentTime, normalize(s.removed, s.duration), s.duration);
-      if (to === "end") s.audio.pause();
-      else if (to !== null) s.audio.currentTime = to;
-    }
+    skipRemoved(s);
     placePlayhead(s);
     s.raf = requestAnimationFrame(tick);
   };
