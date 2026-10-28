@@ -7,6 +7,7 @@ mod engine;
 mod names;
 mod preview;
 mod resolve;
+mod sponsor;
 mod tools;
 mod transcode;
 
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 pub use cut::{Cut, Range, normalize};
 pub use engine::{Engine, Event, Id, Options, Outcome, Skip};
 pub use preview::{PEAK_BUCKETS, make_preview, peaks};
+pub use sponsor::{Segment, suggestions};
 pub use tools::{Tools, command};
 pub use transcode::Format;
 /// Exposed for the real-ffmpeg integration test only.
