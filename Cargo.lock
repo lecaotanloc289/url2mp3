@@ -4755,7 +4755,7 @@ dependencies = [
 
 [[package]]
 name = "url2mp3"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -4766,7 +4766,7 @@ dependencies = [
 
 [[package]]
 name = "url2mp3-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "log",
@@ -4787,7 +4787,7 @@ dependencies = [
 
 [[package]]
 name = "url2mp3-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
