@@ -103,6 +103,15 @@ export function ready(state: QueueState): string[] {
 }
 
 /**
+ * A link added to the tray is still being read (its row, or a playlist's, is `probing`), so
+ * "save all" would leave it out. A saved row probing again (a playlist track read before its
+ * download) does not count: it is already on its way.
+ */
+export function resolving(state: QueueState): boolean {
+  return Object.values(state.rows).some((r) => r.status === "probing" && !r.saved);
+}
+
+/**
  * The `save` item for a row. Cuts need the duration to turn removed ranges into kept ones: the
  * trim dialog always stores the duration it learned from the audio on the row (`cut` Msg), so a
  * row without one has never been trimmed and is saved whole. A kept part reaching the end is

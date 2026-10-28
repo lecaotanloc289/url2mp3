@@ -18,6 +18,7 @@ import {
   percent,
   ready,
   reduce,
+  resolving,
   saveItem,
   summary,
   tag,
@@ -117,6 +118,10 @@ function renderList() {
   const saveAll = $<HTMLButtonElement>("#save-all");
   saveAll.hidden = waiting === 0;
   saveAll.textContent = t("saveAll", { n: waiting });
+  // Pressed now, it would leave out the links still being read.
+  const busy = resolving(state);
+  saveAll.disabled = busy;
+  saveAll.title = busy ? t("status.probing") : "";
   const open = trimKey();
   if (open) updateTrim(state.rows[open]);
 }
@@ -311,6 +316,7 @@ function save(items: SaveItem[]) {
 }
 
 function saveAll() {
+  if (resolving(state)) return;
   save(ready(state).map((k) => saveItem(state.rows[k], t("trimmedSuffix"))));
 }
 

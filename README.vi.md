@@ -32,7 +32,8 @@ App chưa ký số nên lần mở đầu cần thêm một bước:
 
 Dán link hoặc gõ tên bài, bấm Thêm vào khay (⌘/Ctrl + Enter). Một link thì màn cắt tự mở: nghe
 thử (tự nhảy qua đoạn đã bỏ), bỏ bất kỳ đoạn nào, rồi tải cả bài hoặc bản đã cắt. Nhiều link hoặc
-playlist thì nằm chờ trong khay; "● Tải N bài" tải hết, mỗi bài giữ đoạn cắt của nó. Chưa bấm Tải
+playlist thì nằm chờ trong khay; "● Tải N bài" tải hết, mỗi bài giữ đoạn cắt của nó (nút chờ đến khi mọi link vừa thêm đã đọc
+xong). Chưa bấm Tải
 thì chưa có file nào được ghi vào thư mục lưu. Định dạng
 (MP3 / M4A / Opus), thư mục lưu, bitrate, số bài cùng lúc, giới hạn playlist, ảnh bìa và cookie
 trình duyệt nằm trong Cài đặt. Giao diện tiếng Việt hoặc tiếng Anh, theo ngôn ngữ máy nếu bạn

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent, TrayEvent } from "./api";
 import { formatTime } from "./cut";
-import { canOpen, empty, groupStats, lengthText, percent, ready, reduce, saveItem, summary, tag, type QueueState } from "./state";
+import { canOpen, empty, groupStats, lengthText, percent, ready, reduce, resolving, saveItem, summary, tag, type QueueState } from "./state";
 
 const run = (events: EngineEvent[], state: QueueState = empty()) =>
   events.reduce((s, event) => reduce(s, { kind: "engine", event }), state);
@@ -168,6 +168,29 @@ describe("tray", () => {
     expect(s.groups["0"]).toMatchObject({ title: "Chill", count: 3, input: "https://youtube.com/playlist?list=1" });
     expect(s.groups["0"].children).toEqual(["1", "2", "3"]);
     expect(ready(s)).toEqual(["1", "2", "3"]);
+  });
+
+  it("resolving: a link still being read holds back save-all, a saved row probing again does not", () => {
+    let s = run([{ kind: "probing", id: 5, parent: null, label: "https://youtu.be/y" }], one());
+    expect(ready(s)).toEqual(["0"]);
+    expect(resolving(s)).toBe(true);
+    s = tray([added(5, { input: "https://youtu.be/y" })], s);
+    expect(resolving(s)).toBe(false);
+    expect(ready(s)).toEqual(["0", "5"]);
+    // A playlist link is a probing row until it becomes its group.
+    s = run([{ kind: "probing", id: 6, parent: null, label: "https://youtube.com/playlist?list=2" }], s);
+    expect(resolving(s)).toBe(true);
+    s = tray([{ kind: "playlist", id: 6, input: "https://youtube.com/playlist?list=2", title: "Mix", count: 1 }, added(7, { parent: 6, input: null })], s);
+    expect(resolving(s)).toBe(false);
+    // Saving a flat playlist track reads it first: it is not "being added".
+    s = reduce(s, { kind: "saving", keys: ["7"] });
+    s = run([{ kind: "probing", id: 7, parent: 6, label: "Song" }], s);
+    expect(s.rows["7"].status).toBe("probing");
+    expect(resolving(s)).toBe(false);
+    // A link that failed to resolve does not hold anything back.
+    s = run([{ kind: "probing", id: 8, parent: null, label: "https://x/bad" }], s);
+    s = run([{ kind: "failed", id: 8, parent: null, label: "https://x/bad", message: "gone", network: false }], s);
+    expect(resolving(s)).toBe(false);
   });
 
   it("a re-sent added keeps status, cuts and preview", () => {
