@@ -1,4 +1,6 @@
 // Vietnamese and English strings. Both dictionaries must have the same keys (tested).
+// A `<key>_one` variant is used instead of `<key>` when `{n}` is 1 (English singular;
+// Vietnamese has no plural, so its `_one` strings repeat the base text).
 
 import type { Language } from "./api";
 
@@ -7,6 +9,7 @@ const vi = {
   placeholder: "Dán link hoặc gõ tên bài hát…\nNhiều link: mỗi dòng một link",
   add: "Thêm vào khay",
   saveAll: "● Tải {n} bài",
+  saveAll_one: "● Tải {n} bài",
   shortcut: "⌘/Ctrl + Enter",
   settings: "Cài đặt",
   emptyTitle: "Chưa có bài nào",
@@ -16,8 +19,10 @@ const vi = {
   trimmedSuffix: "đã cắt",
   "tag.whole": "cả bài",
   "tag.removed": "Đã bỏ {n} đoạn",
+  "tag.removed_one": "Đã bỏ {n} đoạn",
   "tag.suggested": "gợi ý bỏ {time}",
-  playlistReady: "{count} bài · sẵn sàng",
+  playlistReady: "{n} bài · sẵn sàng",
+  playlistReady_one: "{n} bài · sẵn sàng",
   "trim.open": "Nghe thử và cắt",
   "trim.close": "Đóng",
   "trim.loading": "Đang chuẩn bị bản nghe thử…",
@@ -35,6 +40,7 @@ const vi = {
   "trim.skips": "Nghe thử tự nhảy qua đoạn đã bỏ.",
   "trim.exists": "Đã có trong thư mục — bản đã cắt sẽ được lưu bên cạnh.",
   "trim.suggest": "Tìm thấy {n} đoạn không phải nhạc: {list}",
+  "trim.suggest_one": "Tìm thấy {n} đoạn không phải nhạc: {list}",
   "trim.acceptAll": "Bỏ hết",
   "trim.dismiss": "Không",
   "trim.help": "Kéo trên sóng nhạc để chọn một khúc, rồi bấm Bỏ đoạn. Kéo mép sọc đỏ để chỉnh lại.",
@@ -99,7 +105,8 @@ const vi = {
   "set.save": "Lưu",
   "set.close": "Đóng",
   "set.legal": "Chỉ tải nội dung bạn có quyền tải.",
-  keepAlive: "Đang tải {active} bài…",
+  keepAlive: "Đang tải {n} bài…",
+  keepAlive_one: "Đang tải {n} bài…",
 };
 
 type Key = keyof typeof vi;
@@ -109,6 +116,7 @@ const en: Record<Key, string> = {
   placeholder: "Paste links or type a song name…\nSeveral links: one per line",
   add: "Add to tray",
   saveAll: "● Download {n} tracks",
+  saveAll_one: "● Download {n} track",
   shortcut: "⌘/Ctrl + Enter",
   settings: "Settings",
   emptyTitle: "Nothing here yet",
@@ -118,8 +126,10 @@ const en: Record<Key, string> = {
   trimmedSuffix: "trimmed",
   "tag.whole": "whole track",
   "tag.removed": "{n} parts removed",
+  "tag.removed_one": "{n} part removed",
   "tag.suggested": "suggested: remove {time}",
-  playlistReady: "{count} tracks · ready",
+  playlistReady: "{n} tracks · ready",
+  playlistReady_one: "{n} track · ready",
   "trim.open": "Listen and trim",
   "trim.close": "Close",
   "trim.loading": "Getting the preview ready…",
@@ -137,6 +147,7 @@ const en: Record<Key, string> = {
   "trim.skips": "The preview skips removed parts.",
   "trim.exists": "Already in your folder — the trimmed copy is saved alongside.",
   "trim.suggest": "Found {n} non-music parts: {list}",
+  "trim.suggest_one": "Found {n} non-music part: {list}",
   "trim.acceptAll": "Remove all",
   "trim.dismiss": "No",
   "trim.help": "Drag on the waveform to select a part, then Remove it. Drag the edges of a red part to adjust it.",
@@ -201,7 +212,8 @@ const en: Record<Key, string> = {
   "set.save": "Save",
   "set.close": "Close",
   "set.legal": "Only download content you have the right to.",
-  keepAlive: "Downloading {active} tracks…",
+  keepAlive: "Downloading {n} tracks…",
+  keepAlive_one: "Downloading {n} track…",
 };
 
 export const dictionaries: Record<Language, Record<Key, string>> = { vi, en };
@@ -216,7 +228,10 @@ export const setLanguage = (lang: Language) => (current = lang);
 export const language = () => current;
 
 export function t(key: Key, vars: Record<string, string | number> = {}): string {
-  return dictionaries[current][key].replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? `{${name}}`));
+  const dict = dictionaries[current];
+  const one = `${key}_one`;
+  const text = vars.n === 1 && one in dict ? dict[one as Key] : dict[key];
+  return text.replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? `{${name}}`));
 }
 
 /** A SponsorBlock category as words; a category this app does not know shows as sent. */

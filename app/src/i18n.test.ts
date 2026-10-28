@@ -6,6 +6,33 @@ describe("i18n", () => {
     expect(Object.keys(dictionaries.en).sort()).toEqual(Object.keys(dictionaries.vi).sort());
   });
 
+  it("every singular variant has its plural, with the same placeholders", () => {
+    for (const dict of Object.values(dictionaries)) {
+      for (const [key, text] of Object.entries(dict)) {
+        if (!key.endsWith("_one")) continue;
+        const base = key.slice(0, -"_one".length) as keyof typeof dict;
+        expect(dict[base], key).toBeDefined();
+        const names = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+        expect(names(text), key).toEqual(names(dict[base]));
+        expect(names(text), key).toContain("n");
+      }
+    }
+  });
+
+  it("uses the singular for one in English, the same words in Vietnamese", () => {
+    setLanguage("en");
+    expect(t("saveAll", { n: 1 })).toBe("● Download 1 track");
+    expect(t("saveAll", { n: 2 })).toBe("● Download 2 tracks");
+    expect(t("saveAll", { n: 0 })).toBe("● Download 0 tracks");
+    expect(t("tag.removed", { n: 1 })).toBe("1 part removed");
+    expect(t("tag.removed", { n: 3 })).toBe("3 parts removed");
+    expect(t("playlistReady", { n: 1 })).toBe("1 track · ready");
+    expect(t("keepAlive", { n: 1 })).toBe("Downloading 1 track…");
+    setLanguage("vi");
+    expect(t("saveAll", { n: 1 })).toBe("● Tải 1 bài");
+    expect(t("saveAll", { n: 4 })).toBe("● Tải 4 bài");
+  });
+
   it("follows the system unless the user chose", () => {
     expect(pickLanguage(null, ["vi-VN", "en-US"])).toBe("vi");
     expect(pickLanguage(null, ["en-US", "vi"])).toBe("vi");

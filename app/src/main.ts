@@ -53,7 +53,7 @@ function dispatch(msg: Msg) {
     const { active } = summary(state);
     if (active !== keptAlive) {
       keptAlive = active;
-      void api.keepAlive(active > 0, t("keepAlive", { active }));
+      void api.keepAlive(active > 0, t("keepAlive", { n: active }));
     }
   }
 }
@@ -239,7 +239,7 @@ function renderGroup(group: Group, index: number): HTMLElement {
     el,
     ".status",
     waiting && !running && !stats.finished && !stats.failed
-      ? t("playlistReady", { count: group.count })
+      ? t("playlistReady", { n: group.count })
       : [t("playlistCount", stats), stats.failed ? t("playlistFailed", stats) : ""].filter(Boolean).join(" · "),
   );
   el.querySelector<HTMLElement>(".meter i")!.style.setProperty("--p", `${group.count ? Math.round(((stats.finished + stats.failed) / group.count) * 100) : 0}%`);
