@@ -404,6 +404,27 @@ async fn passes_js_runtime_and_env_to_ytdlp() {
     );
 }
 
+/// A row copied from a table is its link, not a search for the whole row (whose hit would be
+/// some other video).
+#[tokio::test]
+async fn a_line_with_a_link_downloads_that_link() {
+    let (bin, out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let log = bin.path().join("log");
+    let mut tools = fakes(bin.path());
+    tools.env.push(("FAKE_LOG".into(), log.clone().into()));
+    let (engine, _) = engine(tools, out.path()).await;
+
+    let row = format!("| 509 | Hoa Ban Trắng | Hoài niệm | {LINK} |");
+    assert_eq!(process(&engine, &row).await, vec![Outcome::Done(5)]);
+
+    let log = fs::read_to_string(log).unwrap();
+    assert!(!log.contains("ytsearch"), "{log}");
+    assert!(
+        log.lines().next().unwrap().ends_with(&format!(" {LINK}")),
+        "{log}"
+    );
+}
+
 /// Android runs yt-dlp as `libpython.so <yt-dlp script> …`, and an app's own ffmpeg isn't on
 /// PATH, so yt-dlp is told where it is.
 #[tokio::test]

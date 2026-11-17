@@ -3,7 +3,10 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicU32, Ordering},
+    },
     time::Duration,
 };
 
@@ -19,6 +22,8 @@ pub struct Render {
     out: PathBuf,
     /// Running link or track → its bar and title. Removing a bar clears it from the screen.
     bars: Mutex<HashMap<Id, (ProgressBar, String)>>,
+    /// Failures from YouTube's "Sign in to confirm you're not a bot".
+    bot_checks: AtomicU32,
 }
 
 impl Render {
@@ -33,6 +38,7 @@ impl Render {
             format,
             out,
             bars: Mutex::default(),
+            bot_checks: AtomicU32::new(0),
         })
     }
 
@@ -106,9 +112,17 @@ impl Render {
                 id, label, message, ..
             } => {
                 bars.remove(&id);
+                if is_bot_check(&message) {
+                    self.bot_checks.fetch_add(1, Ordering::Relaxed);
+                }
                 self.println(format!("✗ {label}: {message}"));
             }
         }
+    }
+
+    /// How many links or tracks YouTube refused as a suspected bot.
+    pub fn bot_checks(&self) -> u32 {
+        self.bot_checks.load(Ordering::Relaxed)
     }
 
     pub fn println(&self, line: impl AsRef<str>) {
@@ -133,5 +147,34 @@ impl Render {
 
     fn relative<'a>(&self, path: &'a Path) -> &'a Path {
         path.strip_prefix(&self.out).unwrap_or(path)
+    }
+}
+
+/// YouTube's bot check, which only cookies (or a rest) get past; not its age gate, which
+/// also starts with "Sign in to confirm". As the app's `hint` tells them apart.
+fn is_bot_check(message: &str) -> bool {
+    let m = message.to_lowercase();
+    let age = [
+        "confirm your age",
+        "age-restricted",
+        "age restricted",
+        "inappropriate",
+    ];
+    (m.contains("not a bot") || m.contains("sign in to confirm")) && !age.iter().any(|a| m.contains(a))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_bot_check;
+
+    #[test]
+    fn tells_the_bot_check_from_the_age_gate() {
+        assert!(is_bot_check(
+            "[youtube] tJ2measnTc0: Sign in to confirm you’re not a bot. This helps protect our community."
+        ));
+        assert!(!is_bot_check(
+            "[youtube] x: Sign in to confirm your age. This video may be inappropriate"
+        ));
+        assert!(!is_bot_check("Video unavailable. This video is private"));
     }
 }

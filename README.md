@@ -114,6 +114,8 @@ url2mp3 https://www.tiktok.com/@user/video/123 link2 …   # several links at on
 url2mp3 https://www.tiktok.com/@user/photo/123           # TikTok photo post: its music
 url2mp3 'https://www.youtube.com/playlist?list=…' -n 20  # first 20 tracks of a playlist
 url2mp3 -a links.txt                                     # one link per line
+# A line that holds a link among other text (a table row: | 12 | Title | https://… |) downloads
+# that link; a line without one is a search.
 url2mp3                                                  # paste links, empty line to start
 ```
 
@@ -174,7 +176,7 @@ events. The `url2mp3` command (`crates/cli`) draws those events in the terminal;
 | Error | Fix |
 |---|---|
 | `zsh: parse error near '&'` | Quote the link: `url2mp3 '…watch?v=…&list=…'`, or run `url2mp3` and paste it |
-| `Sign in to confirm you're not a bot` | Lower `-j`, or add `--cookies-from-browser chrome` |
+| `Sign in to confirm you're not a bot` | YouTube throttles your IP after many quick downloads. Add `--cookies-from-browser chrome` (a browser signed in to YouTube); still blocked, lower `-j` too or wait a while |
 | `dns error` / `Failed to resolve '…googlevideo.com'` | Your network or DNS dropped out for a moment (flaky Wi-Fi, VPN/WARP). Run the same command again: finished tracks are skipped |
 | Other YouTube errors | `brew upgrade yt-dlp` (YouTube changes its API often) |
 | `tải trực tiếp lỗi (HTTP 403)` ("direct download failed") | Only a warning: the track was downloaded again through yt-dlp |

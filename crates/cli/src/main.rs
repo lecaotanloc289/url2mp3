@@ -152,6 +152,7 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
         let render = render.clone();
         move |event| render.handle(event)
     };
+    let cookies = cli.cookies_from_browser.is_some();
     let opts = Options {
         format: cli.format,
         bitrate: cli.bitrate,
@@ -223,7 +224,21 @@ async fn run(cli: Cli, inputs: Vec<String>) -> Result<ExitCode> {
             "Gợi ý: {network} bài lỗi mạng/DNS (mạng chập chờn, VPN/WARP), không phải lỗi YouTube."
         ));
     }
-    if failed > network {
+    let bot = render.bot_checks();
+    if bot > 0 {
+        render.println(if cookies {
+            format!(
+                "Gợi ý: {bot} bài bị YouTube chặn vì nghi là bot dù đã dùng cookie: mở YouTube trong \
+                 trình duyệt đó xem còn đăng nhập không, giảm -j (vd. -j 2) hoặc đợi một lúc rồi chạy lại."
+            )
+        } else {
+            format!(
+                "Gợi ý: {bot} bài bị YouTube chặn vì nghi là bot (tải nhiều quá nhanh): chạy lại với \
+                 --cookies-from-browser chrome (trình duyệt đang đăng nhập YouTube), và giảm -j nếu vẫn bị."
+            )
+        });
+    }
+    if failed > network + bot {
         render.println("Gợi ý: lỗi YouTube thường do yt-dlp cũ, cập nhật: brew upgrade yt-dlp");
     }
     if failed > 0 {

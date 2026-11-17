@@ -18,6 +18,26 @@ pub fn is_network_error(msg: &str) -> bool {
     SIGNS.iter().any(|s| msg.contains(s))
 }
 
+/// The first http(s) link inside a line of other text (a row copied from a table or a
+/// spreadsheet, "Title - https://…"), without trailing punctuation. Like the app's
+/// `sharedInput`, but a `|` (a table's column) also ends it. Such a line is that link, not a
+/// search query.
+pub(crate) fn link_in(text: &str) -> Option<&str> {
+    // ASCII lowercasing keeps byte offsets, so `start` indexes `text` too.
+    let lower = text.to_ascii_lowercase();
+    let start = [lower.find("https://"), lower.find("http://")]
+        .into_iter()
+        .flatten()
+        .min()?;
+    let rest = &text[start..];
+    let end = rest
+        .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '|'))
+        .unwrap_or(rest.len());
+    let link = rest[..end].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']']);
+    // A bare scheme is no link.
+    (link.len() > "https://".len()).then_some(link)
+}
+
 /// Case-insensitive: APFS and NTFS treat "Track.mp3" and "TRACK.mp3" as one file.
 pub(crate) fn path_key(path: &Path) -> String {
     format!("path:{}", path.to_string_lossy().to_lowercase())
@@ -92,7 +112,30 @@ pub(crate) fn fit(dir: &Path, name: &str, suffix: &str) -> String {
 mod tests {
     use std::path::Path;
 
-    use super::{fit, is_network_error, sanitize};
+    use super::{fit, is_network_error, link_in, sanitize};
+
+    #[test]
+    fn finds_the_link_in_a_line() {
+        assert_eq!(
+            link_in("| 509 | Hoa Ban Trắng | Hoài niệm | https://www.youtube.com/watch?v=VioTZBzwRIQ |"),
+            Some("https://www.youtube.com/watch?v=VioTZBzwRIQ")
+        );
+        assert_eq!(
+            link_in("Hoa Ban Trắng\thttps://youtu.be/VioTZBzwRIQ|Hoài niệm"),
+            Some("https://youtu.be/VioTZBzwRIQ")
+        );
+        assert_eq!(
+            link_in("[MV](https://youtu.be/VioTZBzwRIQ)."),
+            Some("https://youtu.be/VioTZBzwRIQ")
+        );
+        assert_eq!(
+            link_in("| http://youtu.be/A | Title | https://youtu.be/B |"),
+            Some("http://youtu.be/A")
+        );
+        assert_eq!(link_in("Title HTTPS://YOUTU.BE/x"), Some("HTTPS://YOUTU.BE/x"));
+        assert_eq!(link_in("sơn tùng lạc trôi"), None);
+        assert_eq!(link_in("see https:// later"), None);
+    }
 
     #[test]
     fn classifies_network_errors() {

@@ -23,7 +23,7 @@ use tokio::sync::{OnceCell, Semaphore};
 use crate::{
     cut::{Cut, normalize},
     download::{Downloader, Progress},
-    names::{fit, is_network_error, path_key, sanitize},
+    names::{fit, is_network_error, link_in, path_key, sanitize},
     resolve::{Info, Ytdlp},
     tools::Tools,
     transcode::{self, Format, Tags},
@@ -305,17 +305,24 @@ impl Engine {
 
     /// `resolve` inside a permit the caller holds.
     async fn resolve_now(&self, id: Id, input: &str) -> Result<Resolved> {
-        let search = !(input.starts_with("http://") || input.starts_with("https://"));
+        // A bare link as typed; else the link inside a longer line (a table row keeps its
+        // title next to it), so that line is not searched for and the hit taken for it.
+        let bare = input.starts_with("http://") || input.starts_with("https://");
+        let link = if bare && !input.contains(char::is_whitespace) {
+            Some(input)
+        } else {
+            link_in(input)
+        };
+        let search = link.is_none();
         self.emit(Event::Probing {
             id,
             parent: None,
             label: input.to_owned(),
         });
         // Searches are not flattened: yt-dlp resolves the hit in the same call.
-        let target = if search {
-            format!("ytsearch1:{input}")
-        } else {
-            input.to_owned()
+        let target = match link {
+            Some(link) => link.to_owned(),
+            None => format!("ytsearch1:{input}"),
         };
         let info = self.ytdlp.probe(&target, !search).await?;
         if !info.is_playlist() {

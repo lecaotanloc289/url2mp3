@@ -107,6 +107,8 @@ url2mp3 https://www.tiktok.com/@user/video/123 link2 …   # nhiều link cùng 
 url2mp3 https://www.tiktok.com/@user/photo/123           # bài ảnh TikTok: lấy nhạc nền
 url2mp3 'https://www.youtube.com/playlist?list=…' -n 20  # 20 bài đầu của playlist
 url2mp3 -a danh-sach.txt                                 # mỗi dòng một link
+# Dòng có link lẫn chữ khác (dòng bảng: | 12 | Tên bài | https://… |) thì tải đúng link đó;
+# dòng không có link thì tìm trên YouTube.
 url2mp3                                                  # dán link vào, Enter dòng trống để tải
 ```
 
@@ -165,7 +167,7 @@ kiện. Lệnh `url2mp3` (`crates/cli`) vẽ các sự kiện đó ra terminal; 
 | Lỗi | Cách xử lý |
 |---|---|
 | `zsh: parse error near '&'` | Bọc link trong nháy đơn: `url2mp3 '…watch?v=…&list=…'`, hoặc chạy `url2mp3` rồi dán link |
-| `Sign in to confirm you're not a bot` | Giảm `-j`, hoặc thêm `--cookies-from-browser chrome` |
+| `Sign in to confirm you're not a bot` | YouTube chặn IP sau khi tải nhiều quá nhanh. Thêm `--cookies-from-browser chrome` (trình duyệt đang đăng nhập YouTube); vẫn bị thì giảm `-j` hoặc đợi một lúc |
 | `dns error` / `Failed to resolve '…googlevideo.com'` | Mạng hoặc DNS mất tạm thời (Wi-Fi chập chờn, VPN/WARP). Chạy lại đúng lệnh: bài đã tải xong sẽ tự bỏ qua |
 | Lỗi YouTube khác | `brew upgrade yt-dlp` (YouTube đổi API thường xuyên) |
 | `tải trực tiếp lỗi (HTTP 403)` | Chỉ là cảnh báo: chương trình đã tự tải lại bằng yt-dlp |
